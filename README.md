@@ -10,15 +10,16 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/kanna-code"><img src="https://img.shields.io/npm/v/kanna-code.svg?style=flat&colorA=18181b&colorB=f472b6" alt="npm version" /></a>
-  <a href="https://www.npmjs.com/package/kanna-code"><img src="https://img.shields.io/npm/dm/kanna-code.svg?style=flat&colorA=18181b&colorB=f472b6" alt="npm downloads" /></a>
-  <a href="https://github.com/jakemor/kanna/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/kanna-code.svg?style=flat&colorA=18181b&colorB=f472b6" alt="license" /></a>
-  <a href="https://github.com/jakemor/kanna"><img src="https://img.shields.io/github/stars/jakemor/kanna?style=flat&colorA=18181b&colorB=f472b6" alt="GitHub stars" /></a>
 </p>
 
 <br />
 
 <p align="center">
-  <img src="assets/screenshot.png" alt="Kanna screenshot" width="800" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/screenshot.png" />
+    <source media="(prefers-color-scheme: light)" srcset="assets/screenshot-light.png" />
+    <img src="assets/screenshot.png" alt="Kanna screenshot" width="800" />
+  </picture>
 </p>
 
 <br />
