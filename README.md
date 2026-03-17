@@ -46,9 +46,12 @@ That's it. Kanna opens in your browser at [`localhost:3210`](http://localhost:32
 
 ## Features
 
+- **Multi-provider support** — switch between Claude and Codex (OpenAI) from the chat input, with per-provider model selection, reasoning effort controls, and Codex fast mode
 - **Project-first sidebar** — chats grouped under projects, with live status indicators (idle, running, waiting, failed)
-- **Local project discovery** — auto-discovers projects worked on through Claude and Codex local history
-- **Rich transcript rendering** — user messages, assistant responses, collapsible tool call groups, plan mode dialogs, and interactive prompts
+- **Drag-and-drop project ordering** — reorder project groups in the sidebar with persistent ordering
+- **Local project discovery** — auto-discovers projects from both Claude and Codex local history
+- **Rich transcript rendering** — hydrated tool calls, collapsible tool groups, plan mode dialogs, and interactive prompts with full result display
+- **Quick responses** — lightweight structured queries (e.g. title generation) via Haiku with automatic Codex fallback
 - **Plan mode** — review and approve agent plans before execution
 - **Persistent local history** — refresh-safe routes backed by JSONL event logs and compacted snapshots
 - **Auto-generated titles** — chat titles generated in the background via Claude Haiku
@@ -62,21 +65,24 @@ Browser (React + Zustand)
     ↕  WebSocket
 Bun Server (HTTP + WS)
     ├── WSRouter ─── subscription & command routing
-    ├── AgentCoordinator ─── Claude Agent SDK turn management
+    ├── AgentCoordinator ─── multi-provider turn management
+    ├── ProviderCatalog ─── provider/model/effort normalization
+    ├── QuickResponseAdapter ─── structured queries with provider fallback
     ├── EventStore ─── JSONL persistence + snapshot compaction
     └── ReadModels ─── derived views (sidebar, chat, projects)
     ↕  stdio
-Claude Agent SDK (local process)
+Claude Agent SDK / Codex App Server (local processes)
     ↕
 Local File System (~/.kanna/data/, project dirs)
 ```
 
-**Key patterns:** Event sourcing for all state mutations. CQRS with separate write (event log) and read (derived snapshots) paths. Reactive broadcasting — subscribers get pushed fresh snapshots on every state change. Agent coordination with tool gating for user-approval flows.
+**Key patterns:** Event sourcing for all state mutations. CQRS with separate write (event log) and read (derived snapshots) paths. Reactive broadcasting — subscribers get pushed fresh snapshots on every state change. Multi-provider agent coordination with tool gating for user-approval flows. Provider-agnostic transcript hydration for unified rendering.
 
 ## Requirements
 
 - [Bun](https://bun.sh) v1.0+
 - A working [Claude Code](https://docs.anthropic.com/en/docs/claude-code) environment
+- *(Optional)* [Codex CLI](https://github.com/openai/codex) for Codex provider support
 
 ## Install
 
@@ -143,19 +149,23 @@ src/
 │   ├── app/         App router, pages, central state hook, socket client
 │   ├── components/  Messages, chat chrome, dialogs, buttons, inputs
 │   ├── hooks/       Theme, standalone mode detection
-│   ├── stores/      Zustand stores (chat input persistence)
+│   ├── stores/      Zustand stores (chat input, preferences, project order)
 │   └── lib/         Formatters, path utils, transcript parsing
 ├── server/          Bun backend
 │   ├── cli.ts       CLI entry point & browser launcher
 │   ├── server.ts    HTTP/WS server setup & static serving
-│   ├── agent.ts     AgentCoordinator (Claude SDK turn management)
+│   ├── agent.ts     AgentCoordinator (multi-provider turn management)
+│   ├── codex-app-server.ts  Codex App Server JSON-RPC client
+│   ├── provider-catalog.ts  Provider/model/effort normalization
+│   ├── quick-response.ts    Structured queries with provider fallback
 │   ├── ws-router.ts WebSocket message routing & subscriptions
 │   ├── event-store.ts  JSONL persistence, replay & compaction
 │   ├── discovery.ts Auto-discover projects from Claude and Codex local state
 │   ├── read-models.ts  Derive view models from event state
 │   └── events.ts    Event type definitions
 └── shared/          Shared between client & server
-    ├── types.ts     Core data types
+    ├── types.ts     Core data types, provider catalog, transcript entries
+    ├── tools.ts     Tool call normalization and hydration
     ├── protocol.ts  WebSocket message protocol
     ├── ports.ts     Port configuration
     └── branding.ts  App name, data directory paths
