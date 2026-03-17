@@ -11,7 +11,7 @@ function KannaLayout() {
   const location = useLocation()
   const params = useParams()
   const state = useKannaState(params.chatId ?? null)
-  const showMobileOpenButton = location.pathname === "/projects" || location.pathname === "/settings"
+  const showMobileOpenButton = location.pathname === "/" || location.pathname === "/settings"
 
   return (
     <div className="flex h-[100dvh] min-h-[100dvh] overflow-hidden">
@@ -48,8 +48,7 @@ export function App() {
       <AppDialogProvider>
         <Routes>
           <Route element={<KannaLayout />}>
-            <Route path="/" element={<ChatPage />} />
-            <Route path="/projects" element={<LocalProjectsPage />} />
+            <Route path="/" element={<LocalProjectsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/chat/:chatId" element={<ChatPage />} />
           </Route>

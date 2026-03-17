@@ -148,7 +148,7 @@ export function KannaSidebar({
   }, [activeChatId, activeVisibleCount])
 
   const hasVisibleChats = activeVisibleCount > 0
-  const isLocalProjectsActive = location.pathname === "/projects"
+  const isLocalProjectsActive = location.pathname === "/"
   const isSettingsActive = location.pathname === "/settings"
   const isUtilityPageActive = isLocalProjectsActive || isSettingsActive
   const isConnecting = connectionStatus === "connecting" || !ready
@@ -212,7 +212,7 @@ export function KannaSidebar({
               variant="ghost"
               size="icon"
               onClick={() => {
-                navigate("/projects")
+                navigate("/")
                 onClose()
               }}
               title="New project"

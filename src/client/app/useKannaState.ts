@@ -10,6 +10,13 @@ import { processTranscriptMessages } from "../lib/parseTranscript"
 import { canCancelStatus, getLatestToolIds, isProcessingStatus } from "./derived"
 import { KannaSocket, type SocketStatus } from "./socket"
 
+export function getNewestRemainingChatId(projectGroups: SidebarData["projectGroups"], activeChatId: string): string | null {
+  const projectGroup = projectGroups.find((group) => group.chats.some((chat) => chat.chatId === activeChatId))
+  if (!projectGroup) return null
+
+  return projectGroup.chats.find((chat) => chat.chatId !== activeChatId)?.chatId ?? null
+}
+
 function wsUrl() {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
   return `${protocol}//${window.location.host}/ws`
@@ -338,7 +345,8 @@ export function useKannaState(activeChatId: string | null): KannaState {
     try {
       await socket.command({ type: "chat.delete", chatId: chat.chatId })
       if (chat.chatId === activeChatId) {
-        navigate("/")
+        const nextChatId = getNewestRemainingChatId(sidebarData.projectGroups, chat.chatId)
+        navigate(nextChatId ? `/chat/${nextChatId}` : "/")
       }
     } catch (error) {
       setCommandError(error instanceof Error ? error.message : String(error))
@@ -360,7 +368,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     try {
       await socket.command({ type: "project.remove", projectId })
       if (runtime?.projectId === projectId) {
-        navigate("/projects")
+        navigate("/")
       }
       setCommandError(null)
     } catch (error) {
@@ -395,7 +403,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
       return
     }
 
-    navigate("/projects")
+    navigate("/")
   }
 
   async function handleAskUserQuestion(

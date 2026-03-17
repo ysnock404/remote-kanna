@@ -110,6 +110,14 @@ describe("runCli", () => {
     expect(calls.openUrl).toEqual([])
   })
 
+  test("opens the root route in the browser", async () => {
+    const { calls, deps } = createDeps()
+
+    await runCli(["--port", "4000"], deps)
+
+    expect(calls.openUrl).toEqual(["http://localhost:4000"])
+  })
+
   test("installs and relaunches when a newer version is available", async () => {
     const { calls, deps } = createDeps({
       fetchLatestVersion: async (packageName) => {

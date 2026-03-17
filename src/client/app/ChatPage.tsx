@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react"
 import { ArrowDown, Flower } from "lucide-react"
 import { useOutletContext } from "react-router-dom"
 import { ChatInput } from "../components/chat-ui/ChatInput"
@@ -9,8 +10,31 @@ import { cn } from "../lib/utils"
 import type { KannaState } from "./useKannaState"
 import { KannaTranscript } from "./KannaTranscript"
 
+const EMPTY_STATE_TEXT = "What are we building?"
+const EMPTY_STATE_TYPING_INTERVAL_MS = 19
+
 export function ChatPage() {
   const state = useOutletContext<KannaState>()
+  const inputTopOffset = Math.max(state.transcriptPaddingBottom - 48, 0)
+  const [typedEmptyStateText, setTypedEmptyStateText] = useState("")
+
+  useEffect(() => {
+    if (state.messages.length !== 0) return
+
+    setTypedEmptyStateText("")
+
+    let characterIndex = 0
+    const interval = window.setInterval(() => {
+      characterIndex += 1
+      setTypedEmptyStateText(EMPTY_STATE_TEXT.slice(0, characterIndex))
+
+      if (characterIndex >= EMPTY_STATE_TEXT.length) {
+        window.clearInterval(interval)
+      }
+    }, EMPTY_STATE_TYPING_INTERVAL_MS)
+
+    return () => window.clearInterval(interval)
+  }, [state.activeChatId, state.messages.length])
 
   return (
     <div className="flex-1 flex flex-col min-w-0 relative">
@@ -32,18 +56,38 @@ export function ChatPage() {
             onScroll={state.updateScrollState}
             className="h-full px-4 scroll-pt-[72px]"
           >
-            <div
-              className="animate-fade-in space-y-5 pt-[72px] max-w-[800px] mx-auto"
-              style={{ paddingBottom: state.transcriptPaddingBottom }}
-            >
-              {state.messages.length === 0 ? (
-                <div className="flex flex-col items-center justify-center min-h-[40vh] text-muted-foreground gap-4">
-                  <Flower strokeWidth={1.5} className="size-8 text-muted-foreground"></Flower>
-                  <div className="text-base font-normal text-muted-foreground text-center max-w-xs">
-                    What are we making?
+            {state.messages.length === 0 ? (
+              <div
+                key={state.activeChatId ?? "new-chat"}
+                className="animate-fade-in max-w-[800px] mx-auto flex items-center justify-center"
+                style={{ minHeight: `calc(100dvh - ${inputTopOffset}px)` }}
+              >
+                <div className="flex flex-col items-center justify-center text-muted-foreground gap-4 opacity-70">
+                  <Flower strokeWidth={1.5} className="size-8 text-muted-foreground kanna-empty-state-flower"></Flower>
+                  <div
+                    className="text-base font-normal text-muted-foreground text-center max-w-xs flex items-center kanna-empty-state-text"
+                    aria-label={EMPTY_STATE_TEXT}
+                  >
+                    <span className="relative inline-grid place-items-start">
+                      <span className="invisible col-start-1 row-start-1 whitespace-pre flex items-center">
+                        <span>{EMPTY_STATE_TEXT}</span>
+                        <span className="kanna-typewriter-cursor-slot" aria-hidden="true" />
+                      </span>
+                      <span className="col-start-1 row-start-1 whitespace-pre flex items-center">
+                        <span>{typedEmptyStateText}</span>
+                        <span className="kanna-typewriter-cursor-slot" aria-hidden="true">
+                          <span className="kanna-typewriter-cursor" />
+                        </span>
+                      </span>
+                    </span>
                   </div>
                 </div>
-              ) : (
+              </div>
+            ) : (
+              <div
+                className="animate-fade-in space-y-5 pt-[72px] max-w-[800px] mx-auto"
+                style={{ paddingBottom: state.transcriptPaddingBottom }}
+              >
                 <KannaTranscript
                   messages={state.messages}
                   isLoading={state.isProcessing}
@@ -52,16 +96,14 @@ export function ChatPage() {
                   onAskUserQuestionSubmit={state.handleAskUserQuestion}
                   onExitPlanModeConfirm={state.handleExitPlanMode}
                 />
-              )}
-
-              {state.isProcessing ? <ProcessingMessage status={state.runtime?.status} /> : null}
-              {state.commandError ? (
-                <div className="text-sm text-destructive border border-destructive/20 bg-destructive/5 rounded-xl px-4 py-3">
-                  {state.commandError}
-                </div>
-              ) : null}
-              <div className="flex-1 min-h-[10vh]" aria-hidden="true" />
-            </div>
+                {state.isProcessing ? <ProcessingMessage status={state.runtime?.status} /> : null}
+                {state.commandError ? (
+                  <div className="text-sm text-destructive border border-destructive/20 bg-destructive/5 rounded-xl px-4 py-3">
+                    {state.commandError}
+                  </div>
+                ) : null}
+              </div>
+            )}
           </ScrollArea>
 
           <div

@@ -170,7 +170,7 @@ export async function runCli(argv: string[], deps: CliRuntimeDeps): Promise<CliR
 
   const { port, stop } = await deps.startServer(parsedArgs.options)
   const url = `http://localhost:${port}`
-  const launchUrl = `${url}/projects`
+  const launchUrl = url
 
   deps.log(`${LOG_PREFIX} listening on ${url}`)
   deps.log(`${LOG_PREFIX} data dir: ${getDataDirDisplay()}`)

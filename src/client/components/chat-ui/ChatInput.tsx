@@ -268,7 +268,7 @@ export const ChatInput = memo(function ChatInput({
       <div className="flex items-end gap-2 max-w-[840px] mx-auto border dark:bg-card/40 backdrop-blur-lg border-border rounded-[29px] pr-1.5">
         <Textarea
           ref={textareaRef}
-          placeholder="Ask something..."
+          placeholder="Build something..."
           value={value}
           autoFocus
           rows={1}
