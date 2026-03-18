@@ -30,6 +30,7 @@ export function ChatPage() {
   const setMainSizes = useTerminalLayoutStore((store) => store.setMainSizes)
   const setTerminalSizes = useTerminalLayoutStore((store) => store.setTerminalSizes)
   const scrollback = useTerminalPreferencesStore((store) => store.scrollbackLines)
+  const minColumnWidth = useTerminalPreferencesStore((store) => store.minColumnWidth)
 
   const hasTerminals = terminalLayout.terminals.length > 0
   const showTerminalPane = Boolean(projectId && terminalLayout.isVisible && hasTerminals)
@@ -226,6 +227,7 @@ export function ChatPage() {
               socket={state.socket}
               connectionStatus={state.connectionStatus}
               scrollback={scrollback}
+              minColumnWidth={minColumnWidth}
               onRemoveTerminal={(currentProjectId, terminalId) => {
                 void state.socket.command({ type: "terminal.close", terminalId }).catch(() => {})
                 removeTerminal(currentProjectId, terminalId)

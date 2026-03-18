@@ -4,30 +4,43 @@ import { persist } from "zustand/middleware"
 export const DEFAULT_TERMINAL_SCROLLBACK = 1_000
 export const MIN_TERMINAL_SCROLLBACK = 500
 export const MAX_TERMINAL_SCROLLBACK = 5_000
+export const DEFAULT_TERMINAL_MIN_COLUMN_WIDTH = 450
+export const MIN_TERMINAL_MIN_COLUMN_WIDTH = 250
+export const MAX_TERMINAL_MIN_COLUMN_WIDTH = 900
 
 function clampScrollback(value: number) {
   if (!Number.isFinite(value)) return DEFAULT_TERMINAL_SCROLLBACK
   return Math.min(MAX_TERMINAL_SCROLLBACK, Math.max(MIN_TERMINAL_SCROLLBACK, Math.round(value)))
 }
 
+function clampMinColumnWidth(value: number) {
+  if (!Number.isFinite(value)) return DEFAULT_TERMINAL_MIN_COLUMN_WIDTH
+  return Math.min(MAX_TERMINAL_MIN_COLUMN_WIDTH, Math.max(MIN_TERMINAL_MIN_COLUMN_WIDTH, Math.round(value)))
+}
+
 interface TerminalPreferencesState {
   scrollbackLines: number
+  minColumnWidth: number
   setScrollbackLines: (scrollbackLines: number) => void
+  setMinColumnWidth: (minColumnWidth: number) => void
 }
 
 export const useTerminalPreferencesStore = create<TerminalPreferencesState>()(
   persist(
     (set) => ({
       scrollbackLines: DEFAULT_TERMINAL_SCROLLBACK,
+      minColumnWidth: DEFAULT_TERMINAL_MIN_COLUMN_WIDTH,
       setScrollbackLines: (scrollbackLines) => set({ scrollbackLines: clampScrollback(scrollbackLines) }),
+      setMinColumnWidth: (minColumnWidth) => set({ minColumnWidth: clampMinColumnWidth(minColumnWidth) }),
     }),
     {
       name: "terminal-preferences",
-      version: 1,
+      version: 2,
       migrate: (persistedState) => {
         const state = persistedState as Partial<TerminalPreferencesState> | undefined
         return {
           scrollbackLines: clampScrollback(state?.scrollbackLines ?? DEFAULT_TERMINAL_SCROLLBACK),
+          minColumnWidth: clampMinColumnWidth(state?.minColumnWidth ?? DEFAULT_TERMINAL_MIN_COLUMN_WIDTH),
         }
       },
     }

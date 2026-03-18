@@ -100,6 +100,29 @@ function killTerminalProcessTree(subprocess: Bun.Subprocess | null) {
   }
 }
 
+function signalTerminalProcessGroup(subprocess: Bun.Subprocess | null, signal: NodeJS.Signals) {
+  if (!subprocess) return false
+
+  const pid = subprocess.pid
+  if (typeof pid !== "number") return false
+
+  if (process.platform !== "win32") {
+    try {
+      process.kill(-pid, signal)
+      return true
+    } catch {
+      // Fall back to signaling only the shell if group signaling fails.
+    }
+  }
+
+  try {
+    subprocess.kill(signal)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export class TerminalManager {
   private readonly sessions = new Map<string, TerminalSession>()
   private readonly listeners = new Set<(event: TerminalEvent) => void>()
@@ -220,7 +243,24 @@ export class TerminalManager {
   write(terminalId: string, data: string) {
     const session = this.sessions.get(terminalId)
     if (!session || session.status === "exited") return
-    session.terminal.write(data)
+
+    let cursor = 0
+
+    while (cursor < data.length) {
+      const ctrlCIndex = data.indexOf("\x03", cursor)
+
+      if (ctrlCIndex === -1) {
+        session.terminal.write(data.slice(cursor))
+        return
+      }
+
+      if (ctrlCIndex > cursor) {
+        session.terminal.write(data.slice(cursor, ctrlCIndex))
+      }
+
+      signalTerminalProcessGroup(session.process, "SIGINT")
+      cursor = ctrlCIndex + 1
+    }
   }
 
   resize(terminalId: string, cols: number, rows: number) {

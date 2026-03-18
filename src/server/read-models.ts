@@ -47,7 +47,7 @@ export function deriveSidebarData(
       localPath: project.localPath,
       chats,
     }
-  }).filter((group) => group.chats.length > 0)
+  })
 
   return { projectGroups }
 }

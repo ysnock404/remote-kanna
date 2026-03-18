@@ -232,11 +232,26 @@ export function TerminalPane({
   }, [terminalTheme])
 
   useEffect(() => {
+    if (clearVersion === 0) return
+
     const terminal = terminalRef.current
     if (!terminal) return
-    terminal.clear()
+
+    hasCreatedRef.current = false
+    createAttemptRef.current += 1
+    lastAppliedSnapshotKeyRef.current = null
+    replayStateRef.current = null
+    setMetadata(null)
+    setError(null)
+    terminal.reset()
     refreshTerminal(terminal)
-  }, [clearVersion])
+    void socket.command({
+      type: "terminal.close",
+      terminalId,
+    }).catch((commandError) => {
+      setError(commandError instanceof Error ? commandError.message : String(commandError))
+    })
+  }, [clearVersion, socket, terminalId])
 
   useEffect(() => {
     onPathChange?.(metadata?.cwd ?? null)

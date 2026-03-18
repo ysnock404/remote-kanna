@@ -167,13 +167,13 @@ function SortableProjectGroup({
         </ProjectSectionMenu>
       ) : header}
 
-      {!collapsedSections.has(groupKey) && (
+      {!collapsedSections.has(groupKey) && (displayChats.length > 0 || hasMore) && (
         <div className="space-y-[2px] mb-2 ">
           {displayChats.map(renderChatRow)}
           {hasMore && (
             <button
               onClick={() => onToggleExpandedGroup(groupKey)}
-              className="pl-3 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              className="pl-2.5 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
               {isExpanded ? "Show less" : `Show more (${pathChats.length - chatsPerProject})`}
             </button>
