@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react"
-import { ArrowDown, Flower, Terminal } from "lucide-react"
+import { ArrowDown, Flower } from "lucide-react"
 import { useOutletContext } from "react-router-dom"
 import { ChatInput } from "../components/chat-ui/ChatInput"
 import { ChatNavbar } from "../components/chat-ui/ChatNavbar"
 import { TerminalWorkspace } from "../components/chat-ui/TerminalWorkspace"
 import { ProcessingMessage } from "../components/messages/ProcessingMessage"
-import { Button } from "../components/ui/button"
 import { Card, CardContent } from "../components/ui/card"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "../components/ui/resizable"
 import { ScrollArea } from "../components/ui/scroll-area"
 import { cn } from "../lib/utils"
 import { DEFAULT_PROJECT_TERMINAL_LAYOUT, useTerminalLayoutStore } from "../stores/terminalLayoutStore"
+import { useTerminalPreferencesStore } from "../stores/terminalPreferencesStore"
 import type { KannaState } from "./useKannaState"
 import { KannaTranscript } from "./KannaTranscript"
 
@@ -29,10 +29,10 @@ export function ChatPage() {
   const toggleVisibility = useTerminalLayoutStore((store) => store.toggleVisibility)
   const setMainSizes = useTerminalLayoutStore((store) => store.setMainSizes)
   const setTerminalSizes = useTerminalLayoutStore((store) => store.setTerminalSizes)
+  const scrollback = useTerminalPreferencesStore((store) => store.scrollbackLines)
 
   const hasTerminals = terminalLayout.terminals.length > 0
   const showTerminalPane = Boolean(projectId && terminalLayout.isVisible && hasTerminals)
-
   useEffect(() => {
     if (state.messages.length !== 0) return
 
@@ -73,11 +73,13 @@ export function ChatPage() {
     if (state.messages.length === 0) return
 
     const frameId = window.requestAnimationFrame(() => {
-      state.scrollToBottom()
+      const element = state.scrollRef.current
+      if (!element) return
+      element.scrollTo({ top: element.scrollHeight, behavior: "auto" })
     })
 
     return () => window.cancelAnimationFrame(frameId)
-  }, [showTerminalPane, state.messages.length, state.scrollToBottom])
+  }, [showTerminalPane, state.messages.length, state.scrollRef])
 
   const chatCard = (
     <Card className="bg-background h-full flex flex-col overflow-hidden border-0 rounded-none relative">
@@ -88,6 +90,16 @@ export function ChatPage() {
           onExpandSidebar={state.expandSidebar}
           onNewChat={state.handleCompose}
           localPath={state.navbarLocalPath}
+          embeddedTerminalVisible={showTerminalPane}
+          onToggleEmbeddedTerminal={projectId
+            ? () => {
+              if (hasTerminals) {
+                toggleVisibility(projectId)
+                return
+              }
+              addTerminal(projectId)
+            }
+            : undefined}
           onOpenExternal={(action) => {
             void state.handleOpenExternal(action)
           }}
@@ -202,16 +214,22 @@ export function ChatPage() {
           className="flex-1 min-h-0"
           onLayoutChanged={(layout) => setMainSizes(projectId, [layout.chat, layout.terminal])}
         >
-          <ResizablePanel id="chat" defaultSize={terminalLayout.mainSizes[0]} minSize={25} className="min-h-0">
+          <ResizablePanel id="chat" defaultSize={`${terminalLayout.mainSizes[0]}%`} minSize="25%" className="min-h-0">
             {chatCard}
           </ResizablePanel>
           <ResizableHandle withHandle orientation="vertical" />
-          <ResizablePanel id="terminal" defaultSize={terminalLayout.mainSizes[1]} minSize={15} className="min-h-0">
+          <ResizablePanel id="terminal" defaultSize={`${terminalLayout.mainSizes[1]}%`} minSize="0%" className="min-h-0">
             <TerminalWorkspace
               projectId={projectId}
               layout={terminalLayout}
               onAddTerminal={addTerminal}
-              onRemoveTerminal={removeTerminal}
+              socket={state.socket}
+              connectionStatus={state.connectionStatus}
+              scrollback={scrollback}
+              onRemoveTerminal={(currentProjectId, terminalId) => {
+                void state.socket.command({ type: "terminal.close", terminalId }).catch(() => {})
+                removeTerminal(currentProjectId, terminalId)
+              }}
               onTerminalLayout={setTerminalSizes}
             />
           </ResizablePanel>
@@ -220,24 +238,6 @@ export function ChatPage() {
         chatCard
       )}
 
-      {projectId ? (
-        <Button
-          variant={showTerminalPane ? "default" : "secondary"}
-          size="sm"
-          className="fixed bottom-4 right-4 z-40 shadow-lg"
-          onClick={() => {
-            if (hasTerminals) {
-              toggleVisibility(projectId)
-              return
-            }
-            addTerminal(projectId)
-          }}
-          title="Toggle embedded terminal (Cmd+J)"
-        >
-          <Terminal className="mr-2 size-4" />
-          {hasTerminals ? (showTerminalPane ? "Hide Terminal" : "Show Terminal") : "Open Terminal"}
-        </Button>
-      ) : null}
     </div>
   )
 }

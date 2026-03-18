@@ -41,6 +41,7 @@ function useKannaSocket() {
 }
 
 export interface KannaState {
+  socket: KannaSocket
   activeChatId: string | null
   sidebarData: SidebarData
   localProjects: LocalProjectsSnapshot | null
@@ -448,6 +449,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
   }
 
   return {
+    socket,
     activeChatId,
     sidebarData,
     localProjects,
