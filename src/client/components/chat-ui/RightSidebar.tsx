@@ -1,8 +1,6 @@
-import { RIGHT_SIDEBAR_MIN_WIDTH_PX } from "../../stores/rightSidebarStore"
-
 export function RightSidebar() {
   return (
-    <div className="h-full min-h-0 border-l border-border bg-background" style={{ minWidth: RIGHT_SIDEBAR_MIN_WIDTH_PX }}>
+    <div className="h-full min-h-0 border-l border-border bg-background md:min-w-[300px]">
       <div className="flex h-full min-h-0 flex-col">
         <div className="flex h-[72px] shrink-0 items-center gap-3 border-b border-border px-5">
           <div className="min-w-0">

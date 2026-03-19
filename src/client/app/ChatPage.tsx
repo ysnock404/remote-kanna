@@ -414,6 +414,7 @@ export function ChatPage() {
               className="h-full min-h-0 overflow-hidden"
               data-right-sidebar-open={showRightSidebar ? "true" : "false"}
               data-right-sidebar-animated="false"
+              data-right-sidebar-visual
               style={{
                 "--terminal-toggle-duration": `${TERMINAL_TOGGLE_ANIMATION_DURATION_MS}ms`,
               } as CSSProperties}

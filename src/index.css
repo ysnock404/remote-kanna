@@ -162,6 +162,17 @@
     touch-action: manipulation;
   }
 
+  .hide-number-steppers::-webkit-outer-spin-button,
+  .hide-number-steppers::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  .hide-number-steppers[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
   /* Cursor pointer on all buttons, no focus/active styling */
   button {
     cursor: pointer;
@@ -300,6 +311,27 @@
   }
 
   [data-terminal-visual][data-terminal-open="true"] {
+    opacity: 1;
+    filter: blur(0);
+  }
+
+  [data-right-sidebar-visual] {
+    transition:
+      opacity var(--terminal-toggle-duration, 350ms) cubic-bezier(0.4, 0, 0.2, 1),
+      filter var(--terminal-toggle-duration, 350ms) cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: opacity, filter;
+  }
+
+  [data-right-sidebar-visual][data-right-sidebar-animated="false"] {
+    transition: none;
+  }
+
+  [data-right-sidebar-visual][data-right-sidebar-open="false"] {
+    opacity: 0;
+    filter: blur(5px);
+  }
+
+  [data-right-sidebar-visual][data-right-sidebar-open="true"] {
     opacity: 1;
     filter: blur(0);
   }
