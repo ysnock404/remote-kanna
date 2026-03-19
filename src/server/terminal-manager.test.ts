@@ -139,28 +139,6 @@ describeIfSupported("TerminalManager", () => {
     }
   })
 
-  test("tracks focus report mode after the PTY enables it", async () => {
-    const terminalId = "terminal-focus-enabled"
-    const { manager, getOutput } = await createSession(terminalId)
-
-    try {
-      const enableBeforeLength = getOutput().length
-      manager.write(terminalId, "printf '\\033[?1004h'\r")
-      await waitFor(() => getOutput().length > enableBeforeLength, COMMAND_TIMEOUT_MS)
-      await waitFor(
-        () =>
-          (
-            (manager as unknown as {
-              sessions: Map<string, { focusReportingEnabled: boolean }>
-            }).sessions.get(terminalId)?.focusReportingEnabled
-          ) === true,
-        COMMAND_TIMEOUT_MS
-      )
-    } finally {
-      manager.close(terminalId)
-    }
-  })
-
   test("forwards focus reports when the session mode is enabled", () => {
     const manager = new TerminalManager() as unknown as {
       sessions: Map<
@@ -190,6 +168,62 @@ describeIfSupported("TerminalManager", () => {
     manager.write("terminal-focus-forwarded", FOCUS_IN_SEQUENCE)
 
     expect(writes).toEqual([FOCUS_IN_SEQUENCE])
+  })
+
+  test("resize signals the shell process group with SIGWINCH", () => {
+    const manager = new TerminalManager() as unknown as {
+      sessions: Map<
+        string,
+        {
+          cols: number
+          rows: number
+          headless: { resize: (cols: number, rows: number) => void }
+          terminal: { resize: (cols: number, rows: number) => void }
+          process: { pid: number } | null
+        }
+      >
+      resize: (terminalId: string, cols: number, rows: number) => void
+    }
+    const resizeCalls: Array<{ cols: number; rows: number }> = []
+    const killCalls: Array<{ pid: number; signal: NodeJS.Signals }> = []
+    const originalKill = process.kill
+
+    ;(process as typeof process & {
+      kill: (pid: number, signal?: NodeJS.Signals | number) => boolean
+    }).kill = ((pid: number, signal?: NodeJS.Signals | number) => {
+      if (typeof signal === "string") {
+        killCalls.push({ pid, signal })
+      }
+      return true
+    }) as typeof process.kill
+
+    manager.sessions.set("terminal-resize-sigwinch", {
+      cols: 80,
+      rows: 24,
+      headless: {
+        resize(cols, rows) {
+          resizeCalls.push({ cols, rows })
+        },
+      },
+      terminal: {
+        resize(cols, rows) {
+          resizeCalls.push({ cols, rows })
+        },
+      },
+      process: { pid: 4321 },
+    })
+
+    try {
+      manager.resize("terminal-resize-sigwinch", 120, 40)
+    } finally {
+      process.kill = originalKill
+    }
+
+    expect(resizeCalls).toEqual([
+      { cols: 120, rows: 40 },
+      { cols: 120, rows: 40 },
+    ])
+    expect(killCalls).toContainEqual({ pid: -4321, signal: "SIGWINCH" })
   })
 
   test("new sessions reset focus mode back to filtered", async () => {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react"
-import { FitAddon } from "@xterm/addon-fit"
 import { SerializeAddon } from "@xterm/addon-serialize"
+import { WebLinksAddon } from "@xterm/addon-web-links"
 import { Terminal, type ITheme } from "@xterm/xterm"
 import type { TerminalSnapshot } from "../../../shared/protocol"
 import type { KannaSocket, SocketStatus } from "../../app/socket"
@@ -73,22 +73,63 @@ function getTerminalSize(terminal: Terminal) {
   }
 }
 
+function getMeasuredTerminalSize(terminal: Terminal, container: HTMLElement) {
+  const xtermElement = terminal.element
+  const cellDimensions = (
+    terminal as unknown as {
+      _core?: {
+        _renderService?: {
+          dimensions?: {
+            css?: {
+              cell?: {
+                width?: number
+                height?: number
+              }
+            }
+          }
+        }
+      }
+    }
+  )._core?._renderService?.dimensions?.css?.cell
+
+  const cellWidth = cellDimensions?.width ?? 0
+  const cellHeight = cellDimensions?.height ?? 0
+
+  if (!xtermElement || !Number.isFinite(cellWidth) || !Number.isFinite(cellHeight) || cellWidth <= 0 || cellHeight <= 0) {
+    return null
+  }
+
+  const containerRect = container.getBoundingClientRect()
+  const containerStyle = window.getComputedStyle(container)
+  const xtermStyle = window.getComputedStyle(xtermElement)
+  const overviewRulerWidth = terminal.options.scrollback === 0 ? 0 : (terminal.options.overviewRuler?.width ?? 14)
+  const widthPadding = parseFloat(containerStyle.paddingLeft) + parseFloat(containerStyle.paddingRight) + parseFloat(xtermStyle.paddingLeft) + parseFloat(xtermStyle.paddingRight)
+  const heightPadding = parseFloat(containerStyle.paddingTop) + parseFloat(containerStyle.paddingBottom) + parseFloat(xtermStyle.paddingTop) + parseFloat(xtermStyle.paddingBottom)
+  const availableWidth = Math.max(0, containerRect.width - widthPadding - overviewRulerWidth - 1)
+  const availableHeight = Math.max(0, containerRect.height - heightPadding)
+
+  return {
+    cols: Math.max(2, Math.floor(availableWidth / cellWidth)),
+    rows: Math.max(1, Math.floor(availableHeight / cellHeight)),
+  }
+}
+
 function refreshTerminal(terminal: Terminal) {
   terminal.refresh(0, Math.max(0, terminal.rows - 1))
 }
 
 function syncTerminalSize(
   terminal: Terminal,
-  fitAddon: FitAddon,
+  container: HTMLElement,
   lastSizeRef: MutableRefObject<{ cols: number; rows: number } | null>,
   hasCreated: boolean,
   sendResize: (cols: number, rows: number) => void
 ) {
-  fitAddon.fit()
-  const nextSize = getTerminalSize(terminal)
+  const nextSize = getMeasuredTerminalSize(terminal, container) ?? getTerminalSize(terminal)
   if (lastSizeRef.current && lastSizeRef.current.cols === nextSize.cols && lastSizeRef.current.rows === nextSize.rows) {
     return nextSize
   }
+  terminal.resize(nextSize.cols, nextSize.rows)
   lastSizeRef.current = nextSize
   if (hasCreated) {
     sendResize(nextSize.cols, nextSize.rows)
@@ -108,7 +149,6 @@ export function TerminalPane({
   const { resolvedTheme } = useTheme()
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
-  const fitAddonRef = useRef<FitAddon | null>(null)
   const replayStateRef = useRef<string | null>(null)
   const hasCreatedRef = useRef(false)
   const createAttemptRef = useRef(0)
@@ -128,9 +168,9 @@ export function TerminalPane({
   const scheduleResizeSync = () => {
     const sync = () => {
       const terminalInstance = terminalRef.current
-      const fitAddonInstance = fitAddonRef.current
-      if (!terminalInstance || !fitAddonInstance || !hasCreatedRef.current) return
-      syncTerminalSize(terminalInstance, fitAddonInstance, lastSizeRef, true, sendResize)
+      const element = containerRef.current
+      if (!terminalInstance || !element || !hasCreatedRef.current) return
+      syncTerminalSize(terminalInstance, element, lastSizeRef, true, sendResize)
     }
 
     requestAnimationFrame(() => {
@@ -143,19 +183,19 @@ export function TerminalPane({
     const terminal = new Terminal({
       scrollback,
       cursorBlink: true,
+      cursorStyle: "bar",
+      cursorWidth: 1,
       convertEol: false,
       allowTransparency: true,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       fontSize: 13,
       theme: terminalTheme,
     })
-    const fitAddon = new FitAddon()
     const serializeAddon = new SerializeAddon()
-    terminal.loadAddon(fitAddon)
     terminal.loadAddon(serializeAddon)
+    terminal.loadAddon(new WebLinksAddon())
 
     terminalRef.current = terminal
-    fitAddonRef.current = fitAddon
 
     const element = containerRef.current
 
@@ -164,7 +204,7 @@ export function TerminalPane({
       if (replayStateRef.current) {
         terminal.write(replayStateRef.current)
       }
-      syncTerminalSize(terminal, fitAddon, lastSizeRef, false, () => {})
+      syncTerminalSize(terminal, element, lastSizeRef, false, () => {})
       refreshTerminal(terminal)
       scheduleResizeSync()
     }
@@ -191,9 +231,9 @@ export function TerminalPane({
 
     const observer = new ResizeObserver(() => {
       const terminalInstance = terminalRef.current
-      const fitAddonInstance = fitAddonRef.current
-      if (!terminalInstance || !fitAddonInstance) return
-      syncTerminalSize(terminalInstance, fitAddonInstance, lastSizeRef, hasCreatedRef.current, (cols, rows) => {
+      const element = containerRef.current
+      if (!terminalInstance || !element) return
+      syncTerminalSize(terminalInstance, element, lastSizeRef, hasCreatedRef.current, (cols, rows) => {
         void socket.command({
           type: "terminal.resize",
           terminalId,
@@ -214,7 +254,6 @@ export function TerminalPane({
       replayStateRef.current = serializeAddon.serialize()
       terminal.dispose()
       terminalRef.current = null
-      fitAddonRef.current = null
     }
   }, [scrollback, socket, terminalId, terminalTheme])
 
@@ -299,8 +338,10 @@ export function TerminalPane({
 
     const ensureSession = () => {
       const terminal = terminalRef.current
-      if (!terminal) return
-      const size = getTerminalSize(terminal)
+      const element = containerRef.current
+      if (!terminal || !element) return
+      const size = getMeasuredTerminalSize(terminal, element) ?? getTerminalSize(terminal)
+      terminal.resize(size.cols, size.rows)
       lastSizeRef.current = size
       void socket.command({
         type: "terminal.create",
@@ -326,11 +367,10 @@ export function TerminalPane({
       const run = () => {
         if (createAttemptRef.current !== attempt) return
         const terminal = terminalRef.current
-        const fitAddon = fitAddonRef.current
         const element = containerRef.current
-        if (!terminal || !fitAddon || !element) return
+        if (!terminal || !element) return
 
-        syncTerminalSize(terminal, fitAddon, lastSizeRef, false, () => {})
+        syncTerminalSize(terminal, element, lastSizeRef, false, () => {})
         const rect = element.getBoundingClientRect()
         if (rect.width <= 0 || rect.height <= 0) {
           requestAnimationFrame(run)
@@ -383,7 +423,9 @@ export function TerminalPane({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pb-4">
-      <div ref={containerRef} className="kanna-terminal min-h-0 min-w-0 flex-1 overflow-hidden py-1 pl-3 pr-3 w-full" />
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden px-3 py-1">
+        <div ref={containerRef} className="kanna-terminal min-h-0 min-w-0 flex-1 overflow-hidden w-full" />
+      </div>
       {error ? <div className="px-3 py-1 text-xs text-destructive">Terminal error: {error}</div> : null}
     </div>
   )

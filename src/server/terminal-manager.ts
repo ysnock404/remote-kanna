@@ -174,6 +174,7 @@ export class TerminalManager {
       existing.headless.options.scrollback = existing.scrollback
       existing.headless.resize(existing.cols, existing.rows)
       existing.terminal.resize(existing.cols, existing.rows)
+      signalTerminalProcessGroup(existing.process, "SIGWINCH")
       return this.snapshotOf(existing)
     }
 
@@ -299,6 +300,7 @@ export class TerminalManager {
     session.rows = normalizeTerminalDimension(rows, session.rows)
     session.headless.resize(session.cols, session.rows)
     session.terminal.resize(session.cols, session.rows)
+    signalTerminalProcessGroup(session.process, "SIGWINCH")
   }
 
   close(terminalId: string) {

@@ -93,7 +93,7 @@ export function TerminalWorkspace({
   }, [layout.terminals])
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-transparent">
+    <div className="flex h-full min-h-0 flex-col">
       <div ref={containerRef} className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden">
         <div className="h-full min-h-0" style={{ width: innerWidth || "100%" }}>
           <ResizablePanelGroup
