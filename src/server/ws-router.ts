@@ -162,7 +162,7 @@ export function createWsRouter({
           break
         }
         case "system.openExternal": {
-          openExternal(command.localPath, command.action)
+          await openExternal(command)
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id })
           break
         }

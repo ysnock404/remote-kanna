@@ -2,20 +2,21 @@ import {  Minimize } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import type { ProcessedCompactSummaryMessage } from "./types"
-import { MetaRow, MetaLabel, ExpandableRow, VerticalLineContainer, markdownComponents } from "./shared"
+import { MetaRow, MetaLabel, ExpandableRow, VerticalLineContainer, createMarkdownComponents } from "./shared"
 
 interface Props {
   message: ProcessedCompactSummaryMessage
+  onOpenLocalLink?: (target: { path: string; line?: number; column?: number }) => void
 }
 
-export function CompactSummaryMessage({ message }: Props) {
+export function CompactSummaryMessage({ message, onOpenLocalLink }: Props) {
   return (
     <MetaRow>
       <ExpandableRow
         expandedContent={
           <VerticalLineContainer className="my-4 text-xs">
             <div className="prose prose-sm dark:prose-invert max-w-none">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={createMarkdownComponents({ onOpenLocalLink })}>
                 {message.summary}
               </ReactMarkdown>
             </div>

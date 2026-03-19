@@ -4,6 +4,7 @@ import { APP_NAME } from "../../shared/branding"
 import { PROVIDERS, type AgentProvider, type AskUserQuestionAnswerMap, type ModelOptions, type ProviderCatalogEntry } from "../../shared/types"
 import { useChatPreferencesStore } from "../stores/chatPreferencesStore"
 import { useTerminalLayoutStore } from "../stores/terminalLayoutStore"
+import { getEditorPresetLabel, useTerminalPreferencesStore } from "../stores/terminalPreferencesStore"
 import type { ChatSnapshot, LocalProjectsSnapshot, SidebarChatRow, SidebarData } from "../../shared/types"
 import type { AskUserQuestionItem } from "../components/messages/types"
 import { useAppDialog } from "../components/ui/app-dialog"
@@ -64,6 +65,7 @@ export interface KannaState {
   transcriptPaddingBottom: number
   showScrollButton: boolean
   navbarLocalPath?: string
+  editorLabel: string
   hasSelectedProject: boolean
   openSidebar: () => void
   closeSidebar: () => void
@@ -79,6 +81,7 @@ export interface KannaState {
   handleDeleteChat: (chat: SidebarChatRow) => Promise<void>
   handleRemoveProject: (projectId: string) => Promise<void>
   handleOpenExternal: (action: "open_finder" | "open_terminal" | "open_editor") => Promise<void>
+  handleOpenLocalLink: (target: { path: string; line?: number; column?: number }) => Promise<void>
   handleCompose: () => void
   handleAskUserQuestion: (
     toolUseId: string,
@@ -113,6 +116,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
   const [commandError, setCommandError] = useState<string | null>(null)
   const [startingLocalPath, setStartingLocalPath] = useState<string | null>(null)
   const [pendingChatId, setPendingChatId] = useState<string | null>(null)
+  const editorLabel = getEditorPresetLabel(useTerminalPreferencesStore((store) => store.editorPreset))
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLDivElement>(null)
@@ -383,14 +387,46 @@ export function useKannaState(activeChatId: string | null): KannaState {
     const localPath = runtime?.localPath ?? localProjects?.projects[0]?.localPath ?? sidebarData.projectGroups[0]?.localPath
     if (!localPath) return
     try {
-      await socket.command({
-        type: "system.openExternal",
+      await openExternal({
         action,
         localPath,
       })
     } catch (error) {
       setCommandError(error instanceof Error ? error.message : String(error))
     }
+  }
+
+  async function handleOpenLocalLink(target: { path: string; line?: number; column?: number }) {
+    try {
+      await openExternal({
+        action: "open_editor",
+        localPath: target.path,
+        line: target.line,
+        column: target.column,
+      })
+    } catch (error) {
+      setCommandError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  async function openExternal(command: {
+    action: "open_finder" | "open_terminal" | "open_editor"
+    localPath: string
+    line?: number
+    column?: number
+  }) {
+    const preferences = useTerminalPreferencesStore.getState()
+    setCommandError(null)
+    await socket.command({
+      type: "system.openExternal",
+      ...command,
+      editor: command.action === "open_editor"
+        ? {
+            preset: preferences.editorPreset,
+            commandTemplate: preferences.editorCommandTemplate,
+          }
+        : undefined,
+    })
   }
 
   function handleCompose() {
@@ -472,6 +508,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     transcriptPaddingBottom,
     showScrollButton,
     navbarLocalPath,
+    editorLabel,
     hasSelectedProject,
     openSidebar: () => setSidebarOpen(true),
     closeSidebar: () => setSidebarOpen(false),
@@ -487,6 +524,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     handleDeleteChat,
     handleRemoveProject,
     handleOpenExternal,
+    handleOpenLocalLink,
     handleCompose,
     handleAskUserQuestion,
     handleExitPlanMode,

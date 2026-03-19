@@ -21,6 +21,7 @@ import {
   Check,
 } from "lucide-react"
 import { cn } from "../../lib/utils"
+import { parseLocalFileLink } from "../../lib/pathUtils"
 
 // Tool icon mapping - shared between ToolCallMessage and SystemMessage
 export const toolIcons: Record<string, LucideIcon> = {
@@ -323,6 +324,35 @@ export const markdownComponents = {
       {children}
     </a>
   ),
+}
+
+export function createMarkdownComponents(options?: {
+  onOpenLocalLink?: (target: { path: string; line?: number; column?: number }) => void
+}) {
+  return {
+    ...markdownComponents,
+    a: ({ children, href, onClick, ...props }: ComponentPropsWithoutRef<"a">) => {
+      const parsedLocalLink = parseLocalFileLink(href)
+
+      return (
+        <a
+          className="transition-all underline decoration-2 text-orange-500 decoration-orange-500/50 hover:text-orange-500/70 dark:text-logo dark:decoration-logo/70 dark:hover:text-logo/60 dark:hover:decoration-logo/40 "
+          href={href}
+          target={parsedLocalLink ? undefined : "_blank"}
+          rel={parsedLocalLink ? undefined : "noopener noreferrer"}
+          onClick={(event) => {
+            onClick?.(event)
+            if (event.defaultPrevented || !parsedLocalLink || !options?.onOpenLocalLink) return
+            event.preventDefault()
+            options.onOpenLocalLink(parsedLocalLink)
+          }}
+          {...props}
+        >
+          {children}
+        </a>
+      )
+    },
+  }
 }
 
 export const markdownWithHeadingsComponents = {

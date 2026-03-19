@@ -13,6 +13,7 @@ interface Props {
   embeddedTerminalVisible?: boolean
   onToggleEmbeddedTerminal?: () => void
   onOpenExternal?: (action: "open_finder" | "open_editor") => void
+  editorLabel?: string
 }
 
 export function ChatNavbar({
@@ -24,6 +25,7 @@ export function ChatNavbar({
   embeddedTerminalVisible = false,
   onToggleEmbeddedTerminal,
   onOpenExternal,
+  editorLabel = "Editor",
 }: Props) {
   return (
     <CardHeader
@@ -108,7 +110,7 @@ export function ChatNavbar({
                   variant="ghost"
                   size="icon"
                   onClick={() => onOpenExternal("open_editor")}
-                  title="Open in Cursor"
+                  title={`Open in ${editorLabel}`}
                   className="border border-border/0"
                 >
                   <Code className="h-4.5 w-4.5" />

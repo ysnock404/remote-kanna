@@ -22,6 +22,7 @@ interface Props {
   connectionStatus: SocketStatus
   scrollback: number
   minColumnWidth: number
+  focusRequestVersion?: number
   onAddTerminal: (projectId: string, afterTerminalId?: string) => void
   onRemoveTerminal: (projectId: string, terminalId: string) => void
   onTerminalLayout: (projectId: string, sizes: number[]) => void
@@ -34,6 +35,7 @@ export function TerminalWorkspace({
   connectionStatus,
   scrollback,
   minColumnWidth,
+  focusRequestVersion = 0,
   onAddTerminal,
   onRemoveTerminal,
   onTerminalLayout,
@@ -168,6 +170,7 @@ export function TerminalWorkspace({
                     scrollback={scrollback}
                     connectionStatus={connectionStatus}
                     clearVersion={clearVersionsByTerminalId[terminalPane.id] ?? 0}
+                    focusRequestVersion={index === 0 ? focusRequestVersion : 0}
                     onPathChange={(path) => setPathsByTerminalId((current) => {
                       if (current[terminalPane.id] === path) return current
                       return {

@@ -4,16 +4,17 @@ import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import type { ProcessedToolCall } from "./types"
 import { Button } from "../ui/button"
-import { markdownWithHeadingsComponents } from "./shared"
+import { createMarkdownComponents } from "./shared"
 import { cn } from "../../lib/utils"
 
 interface Props {
   message: Extract<ProcessedToolCall, { toolKind: "exit_plan_mode" }>
   onConfirm: (toolUseId: string, confirmed: boolean, clearContext?: boolean, message?: string) => void
   isLatest: boolean
+  onOpenLocalLink?: (target: { path: string; line?: number; column?: number }) => void
 }
 
-export function ExitPlanModeMessage({ message, onConfirm, isLatest }: Props) {
+export function ExitPlanModeMessage({ message, onConfirm, isLatest, onOpenLocalLink }: Props) {
   const isComplete = !!message.result
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -72,7 +73,7 @@ export function ExitPlanModeMessage({ message, onConfirm, isLatest }: Props) {
           )}
           {input?.plan ? (
             <div className="prose prose-sm dark:prose-invert max-w-none">
-              <Markdown remarkPlugins={[remarkGfm]} components={markdownWithHeadingsComponents}>
+              <Markdown remarkPlugins={[remarkGfm]} components={createMarkdownComponents({ onOpenLocalLink })}>
                 {input.plan}
               </Markdown>
               <div className="mt-5" />

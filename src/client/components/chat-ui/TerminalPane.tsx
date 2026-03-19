@@ -13,6 +13,7 @@ interface Props {
   scrollback: number
   connectionStatus: SocketStatus
   clearVersion?: number
+  focusRequestVersion?: number
   onPathChange?: (path: string | null) => void
 }
 
@@ -144,6 +145,7 @@ export function TerminalPane({
   scrollback,
   connectionStatus,
   clearVersion = 0,
+  focusRequestVersion = 0,
   onPathChange,
 }: Props) {
   const { resolvedTheme } = useTheme()
@@ -270,6 +272,17 @@ export function TerminalPane({
     terminal.options.theme = terminalTheme
     refreshTerminal(terminal)
   }, [terminalTheme])
+
+  useEffect(() => {
+    if (focusRequestVersion === 0) return
+
+    const terminal = terminalRef.current
+    if (!terminal) return
+
+    requestAnimationFrame(() => {
+      terminal.focus()
+    })
+  }, [focusRequestVersion])
 
   useEffect(() => {
     if (clearVersion === 0) return

@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { ArrowDown, Flower } from "lucide-react"
 import { useOutletContext } from "react-router-dom"
+import type { GroupImperativeHandle } from "react-resizable-panels"
 import { ChatInput } from "../components/chat-ui/ChatInput"
 import { ChatNavbar } from "../components/chat-ui/ChatNavbar"
 import { TerminalWorkspace } from "../components/chat-ui/TerminalWorkspace"
@@ -11,6 +12,7 @@ import { ScrollArea } from "../components/ui/scroll-area"
 import { cn } from "../lib/utils"
 import { DEFAULT_PROJECT_TERMINAL_LAYOUT, useTerminalLayoutStore } from "../stores/terminalLayoutStore"
 import { useTerminalPreferencesStore } from "../stores/terminalPreferencesStore"
+import { interpolateLayout, TERMINAL_TOGGLE_ANIMATION_DURATION_MS } from "./terminalToggleAnimation"
 import type { KannaState } from "./useKannaState"
 import { KannaTranscript } from "./KannaTranscript"
 import { useStickyChatFocus } from "./useStickyChatFocus"
@@ -23,7 +25,17 @@ export function ChatPage() {
   const state = useOutletContext<KannaState>()
   const chatCardRef = useRef<HTMLDivElement>(null)
   const chatInputRef = useRef<HTMLTextAreaElement>(null)
+  const mainPanelGroupRef = useRef<GroupImperativeHandle | null>(null)
+  const terminalPanelRef = useRef<HTMLDivElement | null>(null)
+  const animationFrameRef = useRef<number | null>(null)
+  const animationTimeoutRef = useRef<number | null>(null)
+  const isAnimatingTerminalToggleRef = useRef(false)
+  const previousProjectIdRef = useRef<string | null>(null)
+  const previousShouldRenderTerminalLayoutRef = useRef(false)
+  const previousShowTerminalPaneRef = useRef(false)
+  const previousFocusedTerminalVisibilityRef = useRef(false)
   const [typedEmptyStateText, setTypedEmptyStateText] = useState("")
+  const [terminalFocusRequestVersion, setTerminalFocusRequestVersion] = useState(0)
   const projectId = state.runtime?.projectId ?? null
   const projectTerminalLayout = useTerminalLayoutStore((store) => (projectId ? store.projects[projectId] : undefined))
   const terminalLayout = projectTerminalLayout ?? DEFAULT_PROJECT_TERMINAL_LAYOUT
@@ -37,6 +49,7 @@ export function ChatPage() {
 
   const hasTerminals = terminalLayout.terminals.length > 0
   const showTerminalPane = Boolean(projectId && terminalLayout.isVisible && hasTerminals)
+  const shouldRenderTerminalLayout = Boolean(projectId && hasTerminals)
 
   useStickyChatFocus({
     rootRef: chatCardRef,
@@ -91,7 +104,121 @@ export function ChatPage() {
     })
 
     return () => window.cancelAnimationFrame(frameId)
-  }, [showTerminalPane, state.messages.length, state.scrollRef])
+  }, [state.messages.length, state.scrollRef])
+
+  useEffect(() => {
+    const previousProjectId = previousProjectIdRef.current
+    const didProjectChange = previousProjectId !== null && previousProjectId !== projectId
+    const wasVisible = previousFocusedTerminalVisibilityRef.current
+
+    if (!didProjectChange && showTerminalPane && !wasVisible) {
+      setTerminalFocusRequestVersion((current) => current + 1)
+    }
+
+    if (!didProjectChange && !showTerminalPane && wasVisible) {
+      chatInputRef.current?.focus({ preventScroll: true })
+    }
+
+    previousFocusedTerminalVisibilityRef.current = showTerminalPane
+    previousProjectIdRef.current = projectId
+  }, [projectId, showTerminalPane])
+
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current !== null) {
+        window.cancelAnimationFrame(animationFrameRef.current)
+      }
+      if (animationTimeoutRef.current !== null) {
+        window.clearTimeout(animationTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!shouldRenderTerminalLayout) {
+      if (animationFrameRef.current !== null) {
+        window.cancelAnimationFrame(animationFrameRef.current)
+        animationFrameRef.current = null
+      }
+      if (animationTimeoutRef.current !== null) {
+        window.clearTimeout(animationTimeoutRef.current)
+        animationTimeoutRef.current = null
+      }
+      isAnimatingTerminalToggleRef.current = false
+      return
+    }
+
+    const group = mainPanelGroupRef.current
+    if (!group) return
+
+    if (animationFrameRef.current !== null) {
+      window.cancelAnimationFrame(animationFrameRef.current)
+      animationFrameRef.current = null
+    }
+    if (animationTimeoutRef.current !== null) {
+      window.clearTimeout(animationTimeoutRef.current)
+      animationTimeoutRef.current = null
+    }
+
+    const previousProjectId = previousProjectIdRef.current
+    const didProjectChange = previousProjectId !== null && previousProjectId !== projectId
+    const isInitialOpen = showTerminalPane && !previousShowTerminalPaneRef.current
+    const isInitialRender = !previousShouldRenderTerminalLayoutRef.current
+    const targetLayout: [number, number] = showTerminalPane
+      ? terminalLayout.mainSizes
+      : [100, 0]
+    const shouldSkipAnimation = didProjectChange || (isInitialRender && showTerminalPane)
+    const currentLayout: [number, number] = isInitialOpen || isInitialRender
+      ? [100, 0]
+      : [
+        group.getLayout().chat ?? terminalLayout.mainSizes[0],
+        group.getLayout().terminal ?? terminalLayout.mainSizes[1],
+      ]
+
+    previousShouldRenderTerminalLayoutRef.current = shouldRenderTerminalLayout
+    previousShowTerminalPaneRef.current = showTerminalPane
+
+    if (
+      shouldSkipAnimation ||
+      Math.abs(currentLayout[0] - targetLayout[0]) < 0.1 &&
+      Math.abs(currentLayout[1] - targetLayout[1]) < 0.1
+    ) {
+      group.setLayout({ chat: targetLayout[0], terminal: targetLayout[1] })
+      terminalPanelRef.current?.setAttribute("data-terminal-open", showTerminalPane ? "true" : "false")
+      return
+    }
+
+    isAnimatingTerminalToggleRef.current = true
+    terminalPanelRef.current?.setAttribute("data-terminal-open", showTerminalPane ? "true" : "false")
+    group.setLayout({ chat: currentLayout[0], terminal: currentLayout[1] })
+    const startTime = performance.now()
+
+    const step = (now: number) => {
+      const progress = Math.min(1, (now - startTime) / TERMINAL_TOGGLE_ANIMATION_DURATION_MS)
+      const nextLayout = interpolateLayout(currentLayout, targetLayout, progress)
+      group.setLayout({ chat: nextLayout[0], terminal: nextLayout[1] })
+
+      if (progress < 1) {
+        animationFrameRef.current = window.requestAnimationFrame(step)
+        return
+      }
+
+      group.setLayout({ chat: targetLayout[0], terminal: targetLayout[1] })
+      animationFrameRef.current = null
+      animationTimeoutRef.current = window.setTimeout(() => {
+        isAnimatingTerminalToggleRef.current = false
+        animationTimeoutRef.current = null
+      }, 0)
+    }
+
+    animationFrameRef.current = window.requestAnimationFrame(step)
+  }, [shouldRenderTerminalLayout, showTerminalPane, terminalLayout.mainSizes])
+
+  useEffect(() => {
+    if (shouldRenderTerminalLayout) return
+    previousShouldRenderTerminalLayoutRef.current = false
+    previousShowTerminalPaneRef.current = false
+  }, [shouldRenderTerminalLayout])
 
   const chatCard = (
     <Card ref={chatCardRef} className="bg-background h-full flex flex-col overflow-hidden border-0 rounded-none relative">
@@ -115,6 +242,7 @@ export function ChatPage() {
           onOpenExternal={(action) => {
             void state.handleOpenExternal(action)
           }}
+          editorLabel={state.editorLabel}
         />
 
         <ScrollArea
@@ -131,6 +259,7 @@ export function ChatPage() {
                   isLoading={state.isProcessing}
                   localPath={state.runtime?.localPath}
                   latestToolIds={state.latestToolIds}
+                  onOpenLocalLink={state.handleOpenLocalLink}
                   onAskUserQuestionSubmit={state.handleAskUserQuestion}
                   onExitPlanModeConfirm={state.handleExitPlanMode}
                 />
@@ -220,32 +349,54 @@ export function ChatPage() {
 
   return (
     <div className="flex-1 flex flex-col min-w-0 relative">
-      {showTerminalPane && projectId ? (
+      {shouldRenderTerminalLayout && projectId ? (
         <ResizablePanelGroup
           key={projectId}
+          groupRef={mainPanelGroupRef}
           orientation="vertical"
           className="flex-1 min-h-0"
-          onLayoutChanged={(layout) => setMainSizes(projectId, [layout.chat, layout.terminal])}
+          onLayoutChanged={(layout) => {
+            if (!showTerminalPane || isAnimatingTerminalToggleRef.current) {
+              return
+            }
+            setMainSizes(projectId, [layout.chat, layout.terminal])
+          }}
         >
           <ResizablePanel id="chat" defaultSize={`${terminalLayout.mainSizes[0]}%`} minSize="25%" className="min-h-0">
             {chatCard}
           </ResizablePanel>
-          <ResizableHandle withHandle orientation="vertical" />
-          <ResizablePanel id="terminal" defaultSize={`${terminalLayout.mainSizes[1]}%`} minSize="0%" className="min-h-0">
-            <TerminalWorkspace
-              projectId={projectId}
-              layout={terminalLayout}
-              onAddTerminal={addTerminal}
-              socket={state.socket}
-              connectionStatus={state.connectionStatus}
-              scrollback={scrollback}
-              minColumnWidth={minColumnWidth}
-              onRemoveTerminal={(currentProjectId, terminalId) => {
-                void state.socket.command({ type: "terminal.close", terminalId }).catch(() => {})
-                removeTerminal(currentProjectId, terminalId)
-              }}
-              onTerminalLayout={setTerminalSizes}
-            />
+          <ResizableHandle
+            withHandle
+            orientation="vertical"
+            className={cn(!showTerminalPane && "pointer-events-none opacity-0")}
+          />
+          <ResizablePanel
+            id="terminal"
+            defaultSize={`${terminalLayout.mainSizes[1]}%`}
+            minSize="0%"
+            className="min-h-0"
+            elementRef={terminalPanelRef}
+          >
+            <div
+              className="h-full min-h-0 overflow-hidden"
+              data-terminal-open={showTerminalPane ? "true" : "false"}
+            >
+              <TerminalWorkspace
+                projectId={projectId}
+                layout={terminalLayout}
+                onAddTerminal={addTerminal}
+                socket={state.socket}
+                connectionStatus={state.connectionStatus}
+                scrollback={scrollback}
+                minColumnWidth={minColumnWidth}
+                focusRequestVersion={terminalFocusRequestVersion}
+                onRemoveTerminal={(currentProjectId, terminalId) => {
+                  void state.socket.command({ type: "terminal.close", terminalId }).catch(() => {})
+                  removeTerminal(currentProjectId, terminalId)
+                }}
+                onTerminalLayout={setTerminalSizes}
+              />
+            </div>
           </ResizablePanel>
         </ResizablePanelGroup>
       ) : (

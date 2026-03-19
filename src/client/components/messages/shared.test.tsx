@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { markdownComponents } from "./shared"
+import { createMarkdownComponents, markdownComponents } from "./shared"
 
 describe("markdownComponents", () => {
   test("renders markdown headings with transcript-specific sizes and no bold weight", () => {
@@ -45,5 +45,19 @@ describe("markdownComponents", () => {
     expect(html).toContain("https://example.com")
     expect(html).toContain("<ul")
     expect(html).toContain("<li")
+  })
+
+  test("renders local file links without browser target handling", () => {
+    const html = renderToStaticMarkup(
+      <Markdown
+        remarkPlugins={[remarkGfm]}
+        components={createMarkdownComponents({ onOpenLocalLink: () => {} })}
+      >
+        {"[app.ts](/Users/jake/Projects/kanna/src/client/app/App.tsx#L1)"}
+      </Markdown>
+    )
+
+    expect(html).toContain("/Users/jake/Projects/kanna/src/client/app/App.tsx#L1")
+    expect(html).not.toContain('target="_blank"')
   })
 })

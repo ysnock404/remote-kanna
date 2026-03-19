@@ -64,6 +64,7 @@ interface KannaTranscriptProps {
   isLoading: boolean
   localPath?: string
   latestToolIds: Record<string, string | null>
+  onOpenLocalLink: (target: { path: string; line?: number; column?: number }) => void
   onAskUserQuestionSubmit: (
     toolUseId: string,
     questions: AskUserQuestionItem[],
@@ -77,6 +78,7 @@ export function KannaTranscript({
   isLoading,
   localPath,
   latestToolIds,
+  onOpenLocalLink,
   onAskUserQuestionSubmit,
   onExitPlanModeConfirm,
 }: KannaTranscriptProps) {
@@ -84,7 +86,7 @@ export function KannaTranscript({
 
   function renderMessage(message: HydratedTranscriptMessage, index: number): React.ReactNode {
     if (message.kind === "user_prompt") {
-      return <UserMessage key={message.id} content={message.content} />
+      return <UserMessage key={message.id} content={message.content} onOpenLocalLink={onOpenLocalLink} />
     }
 
     switch (message.kind) {
@@ -99,7 +101,7 @@ export function KannaTranscript({
         return isFirst ? <AccountInfoMessage key={message.id} message={message} /> : null
       }
       case "assistant_text":
-        return <TextMessage key={message.id} message={message} />
+        return <TextMessage key={message.id} message={message} onOpenLocalLink={onOpenLocalLink} />
       case "tool":
         if (message.toolKind === "ask_user_question") {
           return (
@@ -118,6 +120,7 @@ export function KannaTranscript({
               message={message}
               onConfirm={onExitPlanModeConfirm}
               isLatest={message.id === latestToolIds.ExitPlanMode}
+              onOpenLocalLink={onOpenLocalLink}
             />
           )
         }
@@ -148,7 +151,7 @@ export function KannaTranscript({
       case "context_cleared":
         return <ContextClearedMessage key={message.id} />
       case "compact_summary":
-        return <CompactSummaryMessage key={message.id} message={message} />
+        return <CompactSummaryMessage key={message.id} message={message} onOpenLocalLink={onOpenLocalLink} />
       case "status":
         return index === messages.length - 1 ? <StatusMessage key={message.id} message={message} /> : null
     }

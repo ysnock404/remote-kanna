@@ -1,5 +1,12 @@
 import type { AgentProvider, ChatSnapshot, LocalProjectsSnapshot, ModelOptions, SidebarData } from "./types"
 
+export type EditorPreset = "cursor" | "vscode" | "windsurf" | "custom"
+
+export interface EditorOpenSettings {
+  preset: EditorPreset
+  commandTemplate: string
+}
+
 export type SubscriptionTopic =
   | { type: "sidebar" }
   | { type: "local-projects" }
@@ -29,7 +36,14 @@ export type ClientCommand =
   | { type: "project.create"; localPath: string; title: string }
   | { type: "project.remove"; projectId: string }
   | { type: "system.ping" }
-  | { type: "system.openExternal"; localPath: string; action: "open_finder" | "open_terminal" | "open_editor" }
+  | {
+      type: "system.openExternal"
+      localPath: string
+      action: "open_finder" | "open_terminal" | "open_editor"
+      line?: number
+      column?: number
+      editor?: EditorOpenSettings
+    }
   | { type: "chat.create"; projectId: string }
   | { type: "chat.rename"; chatId: string; title: string }
   | { type: "chat.delete"; chatId: string }

@@ -278,6 +278,10 @@
     background: transparent !important;
   }
 
+  [data-panel][data-terminal-open] {
+    overflow: hidden;
+  }
+
   /* Custom scrollbar styling */
   * {
     scrollbar-width: thin;
