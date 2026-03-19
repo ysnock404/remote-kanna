@@ -3,15 +3,18 @@ import { ArrowDown, Flower } from "lucide-react"
 import { useOutletContext } from "react-router-dom"
 import { ChatInput } from "../components/chat-ui/ChatInput"
 import { ChatNavbar } from "../components/chat-ui/ChatNavbar"
+import { RightSidebar } from "../components/chat-ui/RightSidebar"
 import { TerminalWorkspace } from "../components/chat-ui/TerminalWorkspace"
 import { ProcessingMessage } from "../components/messages/ProcessingMessage"
 import { Card, CardContent } from "../components/ui/card"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "../components/ui/resizable"
 import { ScrollArea } from "../components/ui/scroll-area"
 import { cn } from "../lib/utils"
+import { DEFAULT_PROJECT_RIGHT_SIDEBAR_LAYOUT, useRightSidebarStore } from "../stores/rightSidebarStore"
 import { DEFAULT_PROJECT_TERMINAL_LAYOUT, useTerminalLayoutStore } from "../stores/terminalLayoutStore"
 import { useTerminalPreferencesStore } from "../stores/terminalPreferencesStore"
 import { TERMINAL_TOGGLE_ANIMATION_DURATION_MS } from "./terminalToggleAnimation"
+import { useRightSidebarToggleAnimation } from "./useRightSidebarToggleAnimation"
 import { useTerminalToggleAnimation } from "./useTerminalToggleAnimation"
 import type { KannaState } from "./useKannaState"
 import { KannaTranscript } from "./KannaTranscript"
@@ -27,23 +30,30 @@ export function ChatPage() {
   const chatCardRef = useRef<HTMLDivElement>(null)
   const chatInputRef = useRef<HTMLTextAreaElement>(null)
   const [typedEmptyStateText, setTypedEmptyStateText] = useState("")
+  const [isEmptyStateTypingComplete, setIsEmptyStateTypingComplete] = useState(false)
   const [fixedTerminalHeight, setFixedTerminalHeight] = useState(0)
   const projectId = state.runtime?.projectId ?? null
   const projectTerminalLayout = useTerminalLayoutStore((store) => (projectId ? store.projects[projectId] : undefined))
   const terminalLayout = projectTerminalLayout ?? DEFAULT_PROJECT_TERMINAL_LAYOUT
+  const projectRightSidebarLayout = useRightSidebarStore((store) => (projectId ? store.projects[projectId] : undefined))
+  const rightSidebarLayout = projectRightSidebarLayout ?? DEFAULT_PROJECT_RIGHT_SIDEBAR_LAYOUT
   const addTerminal = useTerminalLayoutStore((store) => store.addTerminal)
   const removeTerminal = useTerminalLayoutStore((store) => store.removeTerminal)
   const toggleVisibility = useTerminalLayoutStore((store) => store.toggleVisibility)
   const setMainSizes = useTerminalLayoutStore((store) => store.setMainSizes)
   const setTerminalSizes = useTerminalLayoutStore((store) => store.setTerminalSizes)
+  const toggleRightSidebar = useRightSidebarStore((store) => store.toggleVisibility)
+  const setRightSidebarSize = useRightSidebarStore((store) => store.setSize)
   const scrollback = useTerminalPreferencesStore((store) => store.scrollbackLines)
   const minColumnWidth = useTerminalPreferencesStore((store) => store.minColumnWidth)
 
   const hasTerminals = terminalLayout.terminals.length > 0
   const showTerminalPane = Boolean(projectId && terminalLayout.isVisible && hasTerminals)
   const shouldRenderTerminalLayout = Boolean(projectId && hasTerminals)
+  const showRightSidebar = Boolean(projectId && rightSidebarLayout.isVisible)
+  const shouldRenderRightSidebarLayout = Boolean(projectId)
   const {
-    isAnimating,
+    isAnimating: isTerminalAnimating,
     mainPanelGroupRef,
     terminalFocusRequestVersion,
     terminalPanelRef,
@@ -54,6 +64,17 @@ export function ChatPage() {
     projectId,
     terminalLayout,
     chatInputRef,
+  })
+  const {
+    isAnimating: isRightSidebarAnimating,
+    panelGroupRef: rightSidebarPanelGroupRef,
+    sidebarPanelRef,
+    sidebarVisualRef,
+  } = useRightSidebarToggleAnimation({
+    projectId,
+    shouldRenderRightSidebarLayout,
+    showRightSidebar,
+    rightSidebarSize: rightSidebarLayout.size,
   })
 
   useStickyChatFocus({
@@ -67,6 +88,7 @@ export function ChatPage() {
     if (state.messages.length !== 0) return
 
     setTypedEmptyStateText("")
+    setIsEmptyStateTypingComplete(false)
 
     let characterIndex = 0
     const interval = window.setInterval(() => {
@@ -75,6 +97,7 @@ export function ChatPage() {
 
       if (characterIndex >= EMPTY_STATE_TEXT.length) {
         window.clearInterval(interval)
+        setIsEmptyStateTypingComplete(true)
       }
     }, EMPTY_STATE_TYPING_INTERVAL_MS)
 
@@ -149,6 +172,8 @@ export function ChatPage() {
               addTerminal(projectId)
             }
             : undefined}
+          rightSidebarVisible={showRightSidebar}
+          onToggleRightSidebar={projectId ? () => toggleRightSidebar(projectId) : undefined}
           onOpenExternal={(action) => {
             void state.handleOpenExternal(action)
           }}
@@ -209,7 +234,10 @@ export function ChatPage() {
                     <span className="col-start-1 row-start-1 whitespace-pre flex items-center">
                       <span>{typedEmptyStateText}</span>
                       <span className="kanna-typewriter-cursor-slot" aria-hidden="true">
-                        <span className="kanna-typewriter-cursor" />
+                        <span
+                          className="kanna-typewriter-cursor"
+                          data-typing-complete={isEmptyStateTypingComplete ? "true" : "false"}
+                        />
                       </span>
                     </span>
                   </span>
@@ -259,14 +287,121 @@ export function ChatPage() {
 
   return (
     <div ref={layoutRootRef} className="flex-1 flex flex-col min-w-0 relative">
-      {shouldRenderTerminalLayout && projectId ? (
+      {shouldRenderRightSidebarLayout && projectId ? (
+        <ResizablePanelGroup
+          key={`${projectId}-right-sidebar`}
+          groupRef={rightSidebarPanelGroupRef}
+          orientation="horizontal"
+          className="flex-1 min-h-0"
+          onLayoutChanged={(layout) => {
+            if (!showRightSidebar || isRightSidebarAnimating.current) {
+              return
+            }
+            setRightSidebarSize(projectId, layout.rightSidebar)
+          }}
+        >
+          <ResizablePanel
+            id="workspace"
+            defaultSize={`${100 - rightSidebarLayout.size}%`}
+            minSize="50%"
+            className="min-h-0 min-w-0"
+          >
+            {shouldRenderTerminalLayout ? (
+              <ResizablePanelGroup
+                key={projectId}
+                groupRef={mainPanelGroupRef}
+                orientation="vertical"
+                className="flex-1 min-h-0"
+                onLayoutChanged={(layout) => {
+                  if (!showTerminalPane || isTerminalAnimating.current) {
+                    return
+                  }
+                  setMainSizes(projectId, [layout.chat, layout.terminal])
+                }}
+              >
+                <ResizablePanel id="chat" defaultSize={`${terminalLayout.mainSizes[0]}%`} minSize="25%" className="min-h-0">
+                  {chatCard}
+                </ResizablePanel>
+                <ResizableHandle
+                  withHandle
+                  orientation="vertical"
+                  className={cn(!showTerminalPane && "pointer-events-none opacity-0")}
+                />
+                <ResizablePanel
+                  id="terminal"
+                  defaultSize={`${terminalLayout.mainSizes[1]}%`}
+                  minSize="0%"
+                  className="min-h-0"
+                  elementRef={terminalPanelRef}
+                >
+                  <div
+                    ref={terminalVisualRef}
+                    className="h-full min-h-0 overflow-hidden relative"
+                    data-terminal-open={showTerminalPane ? "true" : "false"}
+                    data-terminal-animated="false"
+                    data-terminal-visual
+                    style={{
+                      "--terminal-toggle-duration": `${TERMINAL_TOGGLE_ANIMATION_DURATION_MS}ms`,
+                    } as CSSProperties}
+                  >
+                    <div style={fixedTerminalHeight > 0 ? { height: `${fixedTerminalHeight}px` } : undefined}>
+                      <TerminalWorkspace
+                        projectId={projectId}
+                        layout={terminalLayout}
+                        onAddTerminal={addTerminal}
+                        socket={state.socket}
+                        connectionStatus={state.connectionStatus}
+                        scrollback={scrollback}
+                        minColumnWidth={minColumnWidth}
+                        focusRequestVersion={terminalFocusRequestVersion}
+                        onRemoveTerminal={(currentProjectId, terminalId) => {
+                          void state.socket.command({ type: "terminal.close", terminalId }).catch(() => {})
+                          removeTerminal(currentProjectId, terminalId)
+                        }}
+                        onTerminalLayout={setTerminalSizes}
+                      />
+                    </div>
+                  </div>
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            ) : (
+              chatCard
+            )}
+          </ResizablePanel>
+          <ResizableHandle
+            withHandle
+            orientation="horizontal"
+            className={cn(!showRightSidebar && "pointer-events-none opacity-0")}
+          />
+          <ResizablePanel
+            id="rightSidebar"
+            defaultSize={`${rightSidebarLayout.size}%`}
+            minSize="0%"
+            maxSize="50%"
+            className="min-h-0 min-w-0"
+            elementRef={sidebarPanelRef}
+          >
+            <div
+              ref={sidebarVisualRef}
+              className="h-full min-h-0 overflow-hidden"
+              data-right-sidebar-open={showRightSidebar ? "true" : "false"}
+              data-right-sidebar-animated="false"
+              style={{
+                "--terminal-toggle-duration": `${TERMINAL_TOGGLE_ANIMATION_DURATION_MS}ms`,
+              } as CSSProperties}
+            >
+              <RightSidebar />
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      ) : shouldRenderTerminalLayout && projectId ? (
         <ResizablePanelGroup
           key={projectId}
           groupRef={mainPanelGroupRef}
           orientation="vertical"
           className="flex-1 min-h-0"
           onLayoutChanged={(layout) => {
-            if (!showTerminalPane || isAnimating.current) {
+            if (!showTerminalPane || isTerminalAnimating.current) {
               return
             }
             setMainSizes(projectId, [layout.chat, layout.terminal])
