@@ -70,6 +70,7 @@ export function getResolvedKeybindings(snapshot: KeybindingsSnapshot | null): Ke
       addSplitTerminal: snapshot?.bindings.addSplitTerminal ?? DEFAULT_KEYBINDINGS.addSplitTerminal,
     },
     warning: snapshot?.warning ?? null,
+    filePathDisplay: snapshot?.filePathDisplay ?? "",
   }
 }
 

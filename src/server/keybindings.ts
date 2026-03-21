@@ -2,7 +2,7 @@ import { watch, type FSWatcher } from "node:fs"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import path from "node:path"
-import { getDataRootDir, LOG_PREFIX } from "../shared/branding"
+import { getKeybindingsFilePath, LOG_PREFIX } from "../shared/branding"
 import { DEFAULT_KEYBINDINGS, type KeybindingAction, type KeybindingsSnapshot } from "../shared/types"
 
 const KEYBINDING_ACTIONS = Object.keys(DEFAULT_KEYBINDINGS) as KeybindingAction[]
@@ -12,11 +12,12 @@ type KeybindingsFile = Partial<Record<KeybindingAction, unknown>>
 export class KeybindingsManager {
   readonly filePath: string
   private watcher: FSWatcher | null = null
-  private snapshot: KeybindingsSnapshot = createDefaultSnapshot()
+  private snapshot: KeybindingsSnapshot
   private readonly listeners = new Set<(snapshot: KeybindingsSnapshot) => void>()
 
-  constructor(filePath = path.join(getDataRootDir(homedir()), "keybindings.json")) {
+  constructor(filePath = getKeybindingsFilePath(homedir())) {
     this.filePath = filePath
+    this.snapshot = createDefaultSnapshot(this.filePath)
   }
 
   async initialize() {
@@ -52,7 +53,7 @@ export class KeybindingsManager {
   }
 
   async write(bindings: Partial<Record<KeybindingAction, string[]>>) {
-    const nextSnapshot = normalizeKeybindings(bindings)
+    const nextSnapshot = normalizeKeybindings(bindings, this.filePath)
     await mkdir(path.dirname(this.filePath), { recursive: true })
     await writeFile(this.filePath, `${JSON.stringify(nextSnapshot.bindings, null, 2)}\n`, "utf8")
     this.setSnapshot(nextSnapshot)
@@ -88,31 +89,31 @@ export async function readKeybindingsSnapshot(filePath: string) {
   try {
     const text = await readFile(filePath, "utf8")
     if (!text.trim()) {
-      return createDefaultSnapshot("Keybindings file was empty. Using defaults.")
+      return createDefaultSnapshot(filePath, "Keybindings file was empty. Using defaults.")
     }
     const parsed = JSON.parse(text) as KeybindingsFile
-    return normalizeKeybindings(parsed)
+    return normalizeKeybindings(parsed, filePath)
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-      return createDefaultSnapshot()
+      return createDefaultSnapshot(filePath)
     }
 
     if (error instanceof SyntaxError) {
-      return createDefaultSnapshot("Keybindings file is invalid JSON. Using defaults.")
+      return createDefaultSnapshot(filePath, "Keybindings file is invalid JSON. Using defaults.")
     }
 
     throw error
   }
 }
 
-export function normalizeKeybindings(value: KeybindingsFile | null | undefined): KeybindingsSnapshot {
+export function normalizeKeybindings(value: KeybindingsFile | null | undefined, filePath = getKeybindingsFilePath(homedir())): KeybindingsSnapshot {
   const warnings: string[] = []
   const source = value && typeof value === "object" && !Array.isArray(value)
     ? value
     : null
 
   if (!source) {
-    return createDefaultSnapshot("Keybindings file must contain a JSON object. Using defaults.")
+    return createDefaultSnapshot(filePath, "Keybindings file must contain a JSON object. Using defaults.")
   }
 
   const bindings = {} as Record<KeybindingAction, string[]>
@@ -146,10 +147,11 @@ export function normalizeKeybindings(value: KeybindingsFile | null | undefined):
   return {
     bindings,
     warning: warnings.length > 0 ? `Some keybindings were reset to defaults: ${warnings.join("; ")}` : null,
+    filePathDisplay: formatDisplayPath(filePath),
   }
 }
 
-function createDefaultSnapshot(warning: string | null = null): KeybindingsSnapshot {
+function createDefaultSnapshot(filePath: string, warning: string | null = null): KeybindingsSnapshot {
   return {
     bindings: {
       toggleEmbeddedTerminal: [...DEFAULT_KEYBINDINGS.toggleEmbeddedTerminal],
@@ -159,5 +161,15 @@ function createDefaultSnapshot(warning: string | null = null): KeybindingsSnapsh
       addSplitTerminal: [...DEFAULT_KEYBINDINGS.addSplitTerminal],
     },
     warning,
+    filePathDisplay: formatDisplayPath(filePath),
   }
+}
+
+function formatDisplayPath(filePath: string) {
+  const homePath = homedir()
+  if (filePath === homePath) return "~"
+  if (filePath.startsWith(`${homePath}${path.sep}`)) {
+    return `~${filePath.slice(homePath.length)}`
+  }
+  return filePath
 }

@@ -15,6 +15,18 @@ class FakeWebSocket {
   }
 }
 
+const DEFAULT_KEYBINDINGS_SNAPSHOT: KeybindingsSnapshot = {
+  bindings: {
+    toggleEmbeddedTerminal: ["cmd+j", "ctrl+`"],
+    toggleRightSidebar: ["ctrl+b"],
+    openInFinder: ["cmd+alt+f"],
+    openInEditor: ["cmd+shift+o"],
+    addSplitTerminal: ["cmd+shift+j"],
+  },
+  warning: null,
+  filePathDisplay: "~/.kanna/keybindings.json",
+}
+
 describe("ws-router", () => {
   test("acks system.ping without broadcasting snapshots", () => {
     const router = createWsRouter({
@@ -25,7 +37,7 @@ describe("ws-router", () => {
         onEvent: () => () => {},
       } as never,
       keybindings: {
-        getSnapshot: () => ({ bindings: { toggleEmbeddedTerminal: ["cmd+j", "ctrl+`"], toggleRightSidebar: ["ctrl+b"], openInFinder: ["cmd+alt+f"], openInEditor: ["cmd+shift+o"], addSplitTerminal: ["cmd+shift+j"] }, warning: null }),
+        getSnapshot: () => DEFAULT_KEYBINDINGS_SNAPSHOT,
         onChange: () => () => {},
       } as never,
       refreshDiscovery: async () => [],
@@ -64,7 +76,7 @@ describe("ws-router", () => {
         write: () => {},
       } as never,
       keybindings: {
-        getSnapshot: () => ({ bindings: { toggleEmbeddedTerminal: ["cmd+j", "ctrl+`"], toggleRightSidebar: ["ctrl+b"], openInFinder: ["cmd+alt+f"], openInEditor: ["cmd+shift+o"], addSplitTerminal: ["cmd+shift+j"] }, warning: null }),
+        getSnapshot: () => DEFAULT_KEYBINDINGS_SNAPSHOT,
         onChange: () => () => {},
       } as never,
       refreshDiscovery: async () => [],
@@ -106,7 +118,7 @@ describe("ws-router", () => {
         onEvent: () => () => {},
       } as never,
       keybindings: {
-        getSnapshot: () => ({ bindings: { toggleEmbeddedTerminal: ["cmd+j", "ctrl+`"], toggleRightSidebar: ["ctrl+b"], openInFinder: ["cmd+alt+f"], openInEditor: ["cmd+shift+o"], addSplitTerminal: ["cmd+shift+j"] }, warning: null }),
+        getSnapshot: () => DEFAULT_KEYBINDINGS_SNAPSHOT,
         onChange: () => () => {},
       } as never,
       refreshDiscovery: async () => [],
@@ -152,16 +164,7 @@ describe("ws-router", () => {
   })
 
   test("subscribes to keybindings snapshots and writes keybindings through the router", async () => {
-    const initialSnapshot: KeybindingsSnapshot = {
-      bindings: {
-        toggleEmbeddedTerminal: ["cmd+j", "ctrl+`"],
-        toggleRightSidebar: ["ctrl+b"],
-        openInFinder: ["cmd+alt+f"],
-        openInEditor: ["cmd+shift+o"],
-        addSplitTerminal: ["cmd+shift+j"],
-      },
-      warning: null,
-    }
+    const initialSnapshot: KeybindingsSnapshot = DEFAULT_KEYBINDINGS_SNAPSHOT
     const keybindings = {
       snapshot: initialSnapshot,
       getSnapshot() {
@@ -169,7 +172,7 @@ describe("ws-router", () => {
       },
       onChange: () => () => {},
       async write(bindings: KeybindingsSnapshot["bindings"]) {
-        this.snapshot = { bindings, warning: null }
+        this.snapshot = { bindings, warning: null, filePathDisplay: "~/.kanna/keybindings.json" }
         return this.snapshot
       },
     }
@@ -241,7 +244,8 @@ describe("ws-router", () => {
             addSplitTerminal: ["cmd+alt+j"],
           },
           warning: null,
+          filePathDisplay: "~/.kanna/keybindings.json",
         },
-    })
+      })
   })
 })

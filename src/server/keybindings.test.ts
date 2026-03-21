@@ -6,6 +6,7 @@ import { DEFAULT_KEYBINDINGS } from "../shared/types"
 import { KeybindingsManager, normalizeKeybindings, readKeybindingsSnapshot } from "./keybindings"
 
 let tempDirs: string[] = []
+const TEST_FILE_PATH = "/tmp/kanna-test-keybindings.json"
 
 afterEach(async () => {
   await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })))
@@ -23,7 +24,7 @@ describe("normalizeKeybindings", () => {
     const snapshot = normalizeKeybindings({
       toggleEmbeddedTerminal: [],
       toggleRightSidebar: "Ctrl+B",
-    })
+    }, TEST_FILE_PATH)
 
     expect(snapshot.bindings).toEqual(DEFAULT_KEYBINDINGS)
     expect(snapshot.warning).toContain("toggleEmbeddedTerminal")
@@ -37,7 +38,7 @@ describe("normalizeKeybindings", () => {
       openInFinder: ["Cmd+Alt+F"],
       openInEditor: ["Cmd+Shift+O"],
       addSplitTerminal: ["Cmd+Shift+J"],
-    })
+    }, TEST_FILE_PATH)
 
     expect(snapshot).toEqual({
       bindings: {
@@ -48,6 +49,7 @@ describe("normalizeKeybindings", () => {
         addSplitTerminal: ["cmd+shift+j"],
       },
       warning: null,
+      filePathDisplay: TEST_FILE_PATH,
     })
   })
 })
@@ -59,6 +61,7 @@ describe("readKeybindingsSnapshot", () => {
     expect(snapshot).toEqual({
       bindings: DEFAULT_KEYBINDINGS,
       warning: null,
+      filePathDisplay: filePath,
     })
   })
 
@@ -105,9 +108,25 @@ describe("KeybindingsManager", () => {
         addSplitTerminal: ["cmd+shift+j"],
       },
       warning: null,
+      filePathDisplay: filePath,
     })
     expect(JSON.parse(await Bun.file(filePath).text())).toEqual(snapshot.bindings)
 
     manager.dispose()
+  })
+
+  test("uses the runtime profile for the default keybindings path", () => {
+    const previous = process.env.KANNA_RUNTIME_PROFILE
+    process.env.KANNA_RUNTIME_PROFILE = "dev"
+
+    const manager = new KeybindingsManager()
+
+    expect(manager.filePath).toEndWith("/.kanna-dev/keybindings.json")
+
+    if (previous === undefined) {
+      delete process.env.KANNA_RUNTIME_PROFILE
+    } else {
+      process.env.KANNA_RUNTIME_PROFILE = previous
+    }
   })
 })

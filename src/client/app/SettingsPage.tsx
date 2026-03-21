@@ -13,7 +13,7 @@ import {
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { useNavigate, useOutletContext, useParams } from "react-router-dom"
-import { SDK_CLIENT_APP } from "../../shared/branding"
+import { getKeybindingsFilePathDisplay, SDK_CLIENT_APP } from "../../shared/branding"
 import { DEFAULT_KEYBINDINGS, type KeybindingAction } from "../../shared/types"
 import { markdownComponents } from "../components/messages/shared"
 import { buttonVariants } from "../components/ui/button"
@@ -44,7 +44,7 @@ const sidebarItems = [
     id: "keybindings",
     label: "Keybindings",
     icon: Command,
-    subtitle: "Edit global app shortcuts stored in ~/.kanna/keybindings.json.",
+    subtitle: "Edit global app shortcuts stored in the active keybindings file.",
   },
   // always last
   {
@@ -100,6 +100,10 @@ type FetchReleases = (input: string, init?: RequestInit) => Promise<Response>
 
 let changelogCache: ChangelogCache | null = null
 const KEYBINDING_ACTIONS = Object.keys(KEYBINDING_ACTION_LABELS) as KeybindingAction[]
+
+export function getKeybindingsSubtitle(filePathDisplay: string) {
+  return `Edit global app shortcuts stored in ${filePathDisplay}.`
+}
 
 export function resetSettingsPageChangelogCache() {
   changelogCache = null
@@ -328,6 +332,7 @@ export function SettingsPage() {
   const setEditorCommandTemplate = useTerminalPreferencesStore((store) => store.setEditorCommandTemplate)
   const keybindings = state.keybindings
   const resolvedKeybindings = useMemo(() => getResolvedKeybindings(keybindings), [keybindings])
+  const keybindingsFilePathDisplay = resolvedKeybindings.filePathDisplay || getKeybindingsFilePathDisplay()
   const [scrollbackDraft, setScrollbackDraft] = useState(String(scrollbackLines))
   const [minColumnWidthDraft, setMinColumnWidthDraft] = useState(String(minColumnWidth))
   const [editorCommandDraft, setEditorCommandDraft] = useState(editorCommandTemplate)
@@ -480,6 +485,10 @@ export function SettingsPage() {
     .replaceAll("{line}", "12")
     .replaceAll("{column}", "1")
   const selectedSection = sidebarItems.find((item) => item.id === selectedPage) ?? sidebarItems[0]
+  const selectedSectionSubtitle =
+    selectedPage === "keybindings"
+      ? getKeybindingsSubtitle(keybindingsFilePathDisplay)
+      : selectedSection.subtitle
   const showFooter = !isConnecting
 
   return (
@@ -530,7 +539,7 @@ export function SettingsPage() {
                       <button
                         type="button"
                         onClick={() => {
-                          void state.handleOpenExternalPath("open_editor", "~/.kanna/keybindings.json")
+                          void state.handleOpenExternalPath("open_editor", keybindingsFilePathDisplay)
                         }}
                         className={cn(
                           buttonVariants({ variant: "outline", size: "sm" }),
@@ -543,7 +552,7 @@ export function SettingsPage() {
                     ) : null}
                   </div>
                   <div className="mt-1 text-sm text-muted-foreground">
-                    {selectedSection.subtitle}
+                    {selectedSectionSubtitle}
                   </div>
                 </div>
 

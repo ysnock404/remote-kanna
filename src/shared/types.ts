@@ -185,6 +185,7 @@ export const DEFAULT_KEYBINDINGS: Record<KeybindingAction, string[]> = {
 export interface KeybindingsSnapshot {
   bindings: Record<KeybindingAction, string[]>
   warning: string | null
+  filePathDisplay: string
 }
 
 export interface McpServerInfo {
