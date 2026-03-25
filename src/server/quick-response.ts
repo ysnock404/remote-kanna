@@ -1,6 +1,9 @@
 import { query } from "@anthropic-ai/claude-agent-sdk"
 import { CodexAppServerManager } from "./codex-app-server"
 
+const LOG_PREFIX = "[kanna:title]"
+const CLAUDE_STRUCTURED_TIMEOUT_MS = 5_000
+
 type JsonSchema = {
   type: "object"
   properties: Record<string, unknown>
@@ -61,14 +64,32 @@ async function runClaudeStructured(args: Omit<StructuredQuickResponseArgs<unknow
   })
 
   try {
-    for await (const message of q) {
-      if ("result" in message) {
-        return (message as Record<string, unknown>).structured_output ?? null
-      }
-    }
+    const result = await Promise.race<unknown | null>([
+      (async () => {
+        for await (const message of q) {
+          if ("result" in message) {
+            return (message as Record<string, unknown>).structured_output ?? null
+          }
+        }
+        return null
+      })(),
+      new Promise<null>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`Claude structured response timed out after ${CLAUDE_STRUCTURED_TIMEOUT_MS}ms`))
+        }, CLAUDE_STRUCTURED_TIMEOUT_MS)
+      }),
+    ])
+
+    return result
+  } catch (error) {
+    console.warn(`${LOG_PREFIX} claude structured query failed before fallback:`, error)
     return null
   } finally {
-    q.close()
+    try {
+      q.close()
+    } catch {
+      // Ignore close failures on timed-out or failed quick responses.
+    }
   }
 }
 
@@ -104,20 +125,37 @@ export class QuickResponseAdapter {
       schema: args.schema,
     }
 
-    const claudeResult = await this.tryProvider(args.parse, () => this.runClaudeStructured(request))
+    console.log(`${LOG_PREFIX} starting ${args.task} via claude`, { cwd: args.cwd })
+    const claudeResult = await this.tryProvider("claude", args.task, args.parse, () => this.runClaudeStructured(request))
     if (claudeResult !== null) return claudeResult
 
-    return await this.tryProvider(args.parse, () => this.runCodexStructured(request))
+    console.warn(`${LOG_PREFIX} claude returned no usable result for ${args.task}, falling back to codex`)
+    return await this.tryProvider("codex", args.task, args.parse, () => this.runCodexStructured(request))
   }
 
   private async tryProvider<T>(
+    provider: "claude" | "codex",
+    task: string,
     parse: (value: unknown) => T | null,
     run: () => Promise<unknown | null>
   ): Promise<T | null> {
     try {
       const result = await run()
-      return result === null ? null : parse(result)
-    } catch {
+      if (result === null) {
+        console.warn(`${LOG_PREFIX} ${provider} returned no structured output for ${task}`)
+        return null
+      }
+  
+      const parsed = parse(result)
+      if (parsed === null) {
+        console.warn(`${LOG_PREFIX} ${provider} returned unparseable structured output for ${task}`, { result })
+        return null
+      }
+  
+      console.log(`${LOG_PREFIX} ${provider} produced structured output for ${task}`)
+      return parsed
+    } catch (error) {
+      console.warn(`${LOG_PREFIX} ${provider} failed during ${task}:`, error)
       return null
     }
   }

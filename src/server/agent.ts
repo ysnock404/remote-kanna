@@ -39,6 +39,8 @@ const CLAUDE_TOOLSET = [
   "ExitPlanMode",
 ] as const
 
+const TITLE_LOG_PREFIX = "[kanna:title]"
+
 interface PendingToolRequest {
   toolUseId: string
   tool: NormalizedToolCall & { toolKind: "ask_user_question" | "exit_plan_mode" }
@@ -406,6 +408,14 @@ export class AgentCoordinator {
     const existingMessages = this.store.getMessages(args.chatId)
     const shouldGenerateTitle = args.appendUserPrompt && chat.title === "New Chat" && existingMessages.length === 0
 
+    console.warn(`${TITLE_LOG_PREFIX} title generation check`, {
+      chatId: args.chatId,
+      appendUserPrompt: args.appendUserPrompt,
+      currentTitle: chat.title,
+      existingMessageCount: existingMessages.length,
+      shouldGenerateTitle,
+    })
+
     if (args.appendUserPrompt) {
       await this.store.appendMessage(args.chatId, timestamped({ kind: "user_prompt", content: args.content }, Date.now()))
     }
@@ -418,6 +428,10 @@ export class AgentCoordinator {
 
     if (shouldGenerateTitle) {
       void this.generateTitleInBackground(args.chatId, args.content, project.localPath)
+    } else {
+      console.warn(`${TITLE_LOG_PREFIX} not starting background title generation`, {
+        chatId: args.chatId,
+      })
     }
 
     const onToolRequest = async (request: HarnessToolRequest): Promise<unknown> => {
@@ -529,16 +543,32 @@ export class AgentCoordinator {
 
   private async generateTitleInBackground(chatId: string, messageContent: string, cwd: string) {
     try {
+      console.log(`${TITLE_LOG_PREFIX} background generation started`, {
+        chatId,
+        cwd,
+        messagePreview: messageContent.replace(/\s+/g, " ").trim().slice(0, 120),
+      })
       const title = await this.generateTitle(messageContent, cwd)
-      if (!title) return
+      if (!title) {
+        console.warn(`${TITLE_LOG_PREFIX} background generation produced no title`, { chatId })
+        return
+      }
 
       const chat = this.store.requireChat(chatId)
-      if (chat.title !== "New Chat") return
+      if (chat.title !== "New Chat") {
+        console.log(`${TITLE_LOG_PREFIX} skipping rename because chat title already changed`, {
+          chatId,
+          currentTitle: chat.title,
+          generatedTitle: title,
+        })
+        return
+      }
 
       await this.store.renameChat(chatId, title)
+      console.log(`${TITLE_LOG_PREFIX} renamed chat from generated title`, { chatId, title })
       this.onStateChange()
-    } catch {
-      // Ignore background title generation failures.
+    } catch (error) {
+      console.warn(`${TITLE_LOG_PREFIX} background title generation failed for chat ${chatId}:`, error)
     }
   }
 

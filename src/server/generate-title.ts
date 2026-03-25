@@ -1,5 +1,7 @@
 import { QuickResponseAdapter } from "./quick-response"
 
+const LOG_PREFIX = "[kanna:title]"
+
 const TITLE_SCHEMA = {
   type: "object",
   properties: {
@@ -21,6 +23,11 @@ export async function generateTitleForChat(
   cwd: string,
   adapter = new QuickResponseAdapter()
 ): Promise<string | null> {
+  console.log(`${LOG_PREFIX} generating title`, {
+    cwd,
+    messagePreview: messageContent.replace(/\s+/g, " ").trim().slice(0, 120),
+  })
+
   const result = await adapter.generateStructured<string>({
     cwd,
     task: "conversation title generation",
@@ -31,6 +38,12 @@ export async function generateTitleForChat(
       return normalizeGeneratedTitle(output.title)
     },
   })
+
+  if (result) {
+    console.log(`${LOG_PREFIX} generated title`, { title: result })
+  } else {
+    console.warn(`${LOG_PREFIX} no title generated`)
+  }
 
   return result
 }
