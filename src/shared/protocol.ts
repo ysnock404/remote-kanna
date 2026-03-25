@@ -5,6 +5,7 @@ import type {
   LocalProjectsSnapshot,
   ModelOptions,
   SidebarData,
+  UpdateSnapshot,
 } from "./types"
 
 export type EditorPreset = "cursor" | "vscode" | "windsurf" | "custom"
@@ -17,6 +18,7 @@ export interface EditorOpenSettings {
 export type SubscriptionTopic =
   | { type: "sidebar" }
   | { type: "local-projects" }
+  | { type: "update" }
   | { type: "keybindings" }
   | { type: "chat"; chatId: string }
   | { type: "terminal"; terminalId: string }
@@ -44,6 +46,8 @@ export type ClientCommand =
   | { type: "project.create"; localPath: string; title: string }
   | { type: "project.remove"; projectId: string }
   | { type: "system.ping" }
+  | { type: "update.check"; force?: boolean }
+  | { type: "update.install" }
   | { type: "settings.readKeybindings" }
   | { type: "settings.writeKeybindings"; bindings: KeybindingsSnapshot["bindings"] }
   | {
@@ -83,6 +87,7 @@ export type ClientEnvelope =
 export type ServerSnapshot =
   | { type: "sidebar"; data: SidebarData }
   | { type: "local-projects"; data: LocalProjectsSnapshot }
+  | { type: "update"; data: UpdateSnapshot }
   | { type: "keybindings"; data: KeybindingsSnapshot }
   | { type: "chat"; data: ChatSnapshot | null }
   | { type: "terminal"; data: TerminalSnapshot | null }

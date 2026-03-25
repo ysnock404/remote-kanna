@@ -138,7 +138,7 @@ When `--host <hostname>` is given, the browser opens `http://<hostname>:3210` au
 bun run dev
 ```
 
-the same `--remote` `--host` ect can be used for local development also for remote development changes
+The same `--remote` and `--host` flags can be used with `bun run dev` for remote development.
 
 Or run client and server separately:
 
