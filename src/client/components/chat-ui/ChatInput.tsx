@@ -231,13 +231,11 @@ const ChatInputInner = forwardRef<HTMLTextAreaElement, Props>(function ChatInput
       setLockedComposerState((current) => {
         const next = current ?? createLockedComposerState(selectedProvider, composerState, providerDefaults)
         if (next.provider !== "claude") return next
-        const normalizedContextWindow = normalizeClaudeContextWindow(next.model, contextWindow)
-        const { contextWindow: _unusedContextWindow, ...restModelOptions } = next.modelOptions
         return {
           ...next,
           modelOptions: {
-            ...restModelOptions,
-            ...(normalizedContextWindow ? { contextWindow: normalizedContextWindow } : {}),
+            ...next.modelOptions,
+            contextWindow: normalizeClaudeContextWindow(next.model, contextWindow),
           },
         }
       })
@@ -388,14 +386,12 @@ const ChatInputInner = forwardRef<HTMLTextAreaElement, Props>(function ChatInput
                 setLockedComposerState((current) => {
                   const next = current ?? createLockedComposerState(selectedProvider, composerState, providerDefaults)
                   if (next.provider === "claude") {
-                    const normalizedContextWindow = normalizeClaudeContextWindow(model, next.modelOptions.contextWindow)
-                    const { contextWindow: _unusedContextWindow, ...restModelOptions } = next.modelOptions
                     return {
                       ...next,
                       model,
                       modelOptions: {
-                        ...restModelOptions,
-                        ...(normalizedContextWindow ? { contextWindow: normalizedContextWindow } : {}),
+                        ...next.modelOptions,
+                        contextWindow: normalizeClaudeContextWindow(model, next.modelOptions.contextWindow),
                       },
                     }
                   }

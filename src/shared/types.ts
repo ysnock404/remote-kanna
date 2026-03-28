@@ -42,7 +42,7 @@ export type ServiceTier = "fast"
 
 export interface ClaudeModelOptions {
   reasoningEffort: ClaudeReasoningEffort
-  contextWindow?: ClaudeContextWindow
+  contextWindow: ClaudeContextWindow
 }
 
 export interface CodexModelOptions {
@@ -140,9 +140,9 @@ export function getClaudeContextWindowOptions(modelId: string): readonly Provide
   return getClaudeModelOption(modelId)?.contextWindowOptions ?? []
 }
 
-export function normalizeClaudeContextWindow(modelId: string, contextWindow?: unknown): ClaudeContextWindow | undefined {
+export function normalizeClaudeContextWindow(modelId: string, contextWindow?: unknown): ClaudeContextWindow {
   const options = getClaudeContextWindowOptions(modelId)
-  if (options.length === 0) return undefined
+  if (options.length === 0) return DEFAULT_CLAUDE_MODEL_OPTIONS.contextWindow
   return options.some((option) => option.id === contextWindow)
     ? contextWindow as ClaudeContextWindow
     : DEFAULT_CLAUDE_MODEL_OPTIONS.contextWindow

@@ -72,11 +72,11 @@ describe("migrateChatPreferencesState", () => {
       },
     })
 
-    expect(migrated.providerDefaults.claude.modelOptions).toEqual({ reasoningEffort: "low" })
+    expect(migrated.providerDefaults.claude.modelOptions).toEqual({ reasoningEffort: "low", contextWindow: "200k" })
     expect(migrated.composerState).toEqual({
       provider: "claude",
       model: "haiku",
-      modelOptions: { reasoningEffort: "high" },
+      modelOptions: { reasoningEffort: "high", contextWindow: "200k" },
       planMode: false,
     })
   })
@@ -122,7 +122,7 @@ describe("chat preference store", () => {
     expect(useChatPreferencesStore.getState().composerState).toEqual({
       provider: "claude",
       model: "haiku",
-      modelOptions: { reasoningEffort: "high" },
+      modelOptions: { reasoningEffort: "high", contextWindow: "200k" },
       planMode: false,
     })
   })
@@ -157,7 +157,7 @@ describe("chat preference store", () => {
       composerState: {
         provider: "claude",
         model: "haiku",
-        modelOptions: { reasoningEffort: "low" },
+        modelOptions: { reasoningEffort: "low", contextWindow: "200k" },
         planMode: false,
       },
       providerDefaults: {

@@ -75,7 +75,7 @@ function normalizeClaudePreference(value?: {
     model,
     modelOptions: {
       reasoningEffort: model !== "opus" && normalizedEffort === "max" ? "high" : normalizedEffort,
-      ...(contextWindow ? { contextWindow } : {}),
+      contextWindow,
     },
     planMode: Boolean(value?.planMode),
   }
