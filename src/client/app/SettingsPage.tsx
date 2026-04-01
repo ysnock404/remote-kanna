@@ -105,6 +105,11 @@ const chatSoundPreferenceOptions: { value: ChatSoundPreference; label: string }[
   { value: "always", label: "Always" },
 ]
 
+const transcriptTocOptions: { value: "enabled" | "disabled"; label: string }[] = [
+  { value: "enabled", label: "Enabled" },
+  { value: "disabled", label: "Disabled" },
+]
+
 const GITHUB_RELEASES_URL = "https://api.github.com/repos/jakemor/kanna/releases"
 const CHANGELOG_CACHE_TTL_MS = 5 * 60 * 1000
 
@@ -412,7 +417,9 @@ export function SettingsPage() {
   const keybindings = state.keybindings
   const defaultProvider = useChatPreferencesStore((store) => store.defaultProvider)
   const providerDefaults = useChatPreferencesStore((store) => store.providerDefaults)
+  const showTranscriptToc = useChatPreferencesStore((store) => store.showTranscriptToc)
   const setDefaultProvider = useChatPreferencesStore((store) => store.setDefaultProvider)
+  const setShowTranscriptToc = useChatPreferencesStore((store) => store.setShowTranscriptToc)
   const setProviderDefaultModel = useChatPreferencesStore((store) => store.setProviderDefaultModel)
   const setProviderDefaultModelOptions = useChatPreferencesStore((store) => store.setProviderDefaultModelOptions)
   const setProviderDefaultPlanMode = useChatPreferencesStore((store) => store.setProviderDefaultPlanMode)
@@ -802,6 +809,18 @@ export function SettingsPage() {
                             </SelectGroup>
                           </SelectContent>
                         </Select>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="Transcript Table of Contents"
+                        description="Show a floating list of user messages in chat when the layout is wider than 1200 px"
+                      >
+                        <SegmentedControl
+                          value={showTranscriptToc ? "enabled" : "disabled"}
+                          onValueChange={(value) => setShowTranscriptToc(value === "enabled")}
+                          options={transcriptTocOptions}
+                          size="sm"
+                        />
                       </SettingsRow>
 
                       <SettingsRow
