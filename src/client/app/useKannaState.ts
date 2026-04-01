@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject }
 import { useNavigate } from "react-router-dom"
 import { APP_NAME } from "../../shared/branding"
 import { PROVIDERS, type AgentProvider, type AskUserQuestionAnswerMap, type KeybindingsSnapshot, type ModelOptions, type ProviderCatalogEntry, type UpdateInstallResult, type UpdateSnapshot } from "../../shared/types"
-import { useChatPreferencesStore } from "../stores/chatPreferencesStore"
+import { NEW_CHAT_COMPOSER_ID, type ComposerState, useChatPreferencesStore } from "../stores/chatPreferencesStore"
 import { useRightSidebarStore } from "../stores/rightSidebarStore"
 import { useTerminalLayoutStore } from "../stores/terminalLayoutStore"
 import { getEditorPresetLabel, useTerminalPreferencesStore } from "../stores/terminalPreferencesStore"
@@ -49,6 +49,39 @@ function logKannaState(message: string, details?: unknown) {
   }
 
   console.info(`[useKannaState] ${message}`, details)
+}
+
+function composerStateFromSendOptions(options?: {
+  provider?: AgentProvider
+  model?: string
+  modelOptions?: ModelOptions
+  planMode?: boolean
+}): ComposerState | null {
+  if (options?.provider === "claude" && options.model && options.modelOptions?.claude) {
+    return {
+      provider: "claude",
+      model: options.model,
+      modelOptions: {
+        reasoningEffort: options.modelOptions.claude.reasoningEffort ?? "high",
+        contextWindow: options.modelOptions.claude.contextWindow ?? "200k",
+      },
+      planMode: Boolean(options.planMode),
+    }
+  }
+
+  if (options?.provider === "codex" && options.model && options.modelOptions?.codex) {
+    return {
+      provider: "codex",
+      model: options.model,
+      modelOptions: {
+        reasoningEffort: options.modelOptions.codex.reasoningEffort ?? "high",
+        fastMode: options.modelOptions.codex.fastMode ?? false,
+      },
+      planMode: Boolean(options.planMode),
+    }
+  }
+
+  return null
 }
 
 export function shouldAutoFollowTranscript(distanceFromBottom: number) {
@@ -170,6 +203,7 @@ export interface KannaState {
   handleCancel: () => Promise<void>
   handleDeleteChat: (chat: SidebarChatRow) => Promise<void>
   handleRemoveProject: (projectId: string) => Promise<void>
+  handleCopyPath: (localPath: string) => Promise<void>
   handleOpenExternal: (action: "open_finder" | "open_terminal" | "open_editor") => Promise<void>
   handleOpenExternalPath: (action: "open_finder" | "open_editor", localPath: string) => Promise<void>
   handleOpenLocalLink: (target: { path: string; line?: number; column?: number }) => Promise<void>
@@ -454,8 +488,12 @@ export function useKannaState(activeChatId: string | null): KannaState {
   }
 
   async function createChatForProject(projectId: string) {
-    useChatPreferencesStore.getState().initializeComposerForNewChat()
+    const chatPreferences = useChatPreferencesStore.getState()
+    const sourceComposerState = activeChatId
+      ? chatPreferences.getComposerState(activeChatId)
+      : chatPreferences.getComposerState(NEW_CHAT_COMPOSER_ID)
     const result = await socket.command<{ chatId: string }>({ type: "chat.create", projectId })
+    chatPreferences.initializeComposerForChat(result.chatId, { sourceState: sourceComposerState })
     setSelectedProjectId(projectId)
     setPendingChatId(result.chatId)
     navigate(`/chat/${result.chatId}`)
@@ -585,6 +623,11 @@ export function useKannaState(activeChatId: string | null): KannaState {
       })
 
       if (!activeChatId && result.chatId) {
+        const chatPreferences = useChatPreferencesStore.getState()
+        chatPreferences.setComposerState(
+          result.chatId,
+          composerStateFromSendOptions(options) ?? chatPreferences.getComposerState(NEW_CHAT_COMPOSER_ID)
+        )
         setPendingChatId(result.chatId)
         navigate(`/chat/${result.chatId}`)
       }
@@ -656,6 +699,18 @@ export function useKannaState(activeChatId: string | null): KannaState {
         action,
         localPath,
       })
+    } catch (error) {
+      setCommandError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  async function handleCopyPath(localPath: string) {
+    try {
+      if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+        throw new Error("Clipboard is not available")
+      }
+      await navigator.clipboard.writeText(localPath)
+      setCommandError(null)
     } catch (error) {
       setCommandError(error instanceof Error ? error.message : String(error))
     }
@@ -740,7 +795,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
   async function handleExitPlanMode(toolUseId: string, confirmed: boolean, clearContext?: boolean, message?: string) {
     if (!activeChatId) return
     if (confirmed) {
-      useChatPreferencesStore.getState().setComposerPlanMode(false)
+      useChatPreferencesStore.getState().setChatComposerPlanMode(activeChatId, false)
     }
     try {
       await socket.command({
@@ -801,6 +856,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     handleCancel,
     handleDeleteChat,
     handleRemoveProject,
+    handleCopyPath,
     handleOpenExternal,
     handleOpenExternalPath,
     handleOpenLocalLink,

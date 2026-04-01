@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { migrateChatPreferencesState, useChatPreferencesStore } from "./chatPreferencesStore"
+import { migrateChatPreferencesState, NEW_CHAT_COMPOSER_ID, useChatPreferencesStore } from "./chatPreferencesStore"
 
 const INITIAL_STATE = useChatPreferencesStore.getInitialState()
 
@@ -8,7 +8,7 @@ afterEach(() => {
 })
 
 describe("migrateChatPreferencesState", () => {
-  test("normalizes provider defaults and composer state", () => {
+  test("normalizes provider defaults and legacy composer state", () => {
     const migrated = migrateChatPreferencesState({
       defaultProvider: "last_used",
       providerDefaults: {
@@ -45,7 +45,8 @@ describe("migrateChatPreferencesState", () => {
           planMode: false,
         },
       },
-      composerState: {
+      chatStates: {},
+      legacyComposerState: {
         provider: "claude",
         model: "sonnet",
         modelOptions: { reasoningEffort: "high", contextWindow: "1m" },
@@ -64,16 +65,18 @@ describe("migrateChatPreferencesState", () => {
           planMode: false,
         },
       },
-      composerState: {
-        provider: "claude",
-        model: "haiku",
-        modelOptions: { reasoningEffort: "high", contextWindow: "1m" as never },
-        planMode: false,
+      chatStates: {
+        chatA: {
+          provider: "claude",
+          model: "haiku",
+          modelOptions: { reasoningEffort: "high", contextWindow: "1m" as never },
+          planMode: false,
+        },
       },
     })
 
     expect(migrated.providerDefaults.claude.modelOptions).toEqual({ reasoningEffort: "low", contextWindow: "200k" })
-    expect(migrated.composerState).toEqual({
+    expect(migrated.chatStates.chatA).toEqual({
       provider: "claude",
       model: "haiku",
       modelOptions: { reasoningEffort: "high", contextWindow: "200k" },
@@ -83,43 +86,72 @@ describe("migrateChatPreferencesState", () => {
 })
 
 describe("chat preference store", () => {
-  test("editing provider defaults does not change composer state", () => {
-    useChatPreferencesStore.getState().setProviderDefaultModel("codex", "gpt-5.3-codex-spark")
-    useChatPreferencesStore.getState().setProviderDefaultModelOptions("codex", {
-      reasoningEffort: "minimal",
-      fastMode: true,
-    })
-    useChatPreferencesStore.getState().setProviderDefaultPlanMode("codex", true)
-
-    const state = useChatPreferencesStore.getState()
-    expect(state.providerDefaults.codex).toEqual({
-      model: "gpt-5.3-codex-spark",
+  test("editing provider defaults does not change existing chat state", () => {
+    useChatPreferencesStore.getState().setComposerState("chat-a", {
+      provider: "codex",
+      model: "gpt-5.3-codex",
       modelOptions: { reasoningEffort: "minimal", fastMode: true },
       planMode: true,
     })
-    expect(state.composerState).toEqual(INITIAL_STATE.composerState)
+
+    useChatPreferencesStore.getState().setProviderDefaultModel("codex", "gpt-5.3-codex-spark")
+    useChatPreferencesStore.getState().setProviderDefaultModelOptions("codex", {
+      reasoningEffort: "low",
+      fastMode: false,
+    })
+    useChatPreferencesStore.getState().setProviderDefaultPlanMode("codex", false)
+
+    expect(useChatPreferencesStore.getState().getComposerState("chat-a")).toEqual({
+      provider: "codex",
+      model: "gpt-5.3-codex",
+      modelOptions: { reasoningEffort: "minimal", fastMode: true },
+      planMode: true,
+    })
   })
 
-  test("editing composer state does not change provider defaults", () => {
-    useChatPreferencesStore.getState().setComposerModel("sonnet")
-    useChatPreferencesStore.getState().setComposerModelOptions({ reasoningEffort: "low", contextWindow: "1m" })
-    useChatPreferencesStore.getState().setComposerPlanMode(true)
+  test("restores isolated composer state by chat id", () => {
+    const store = useChatPreferencesStore.getState()
 
-    const state = useChatPreferencesStore.getState()
-    expect(state.composerState).toEqual({
+    store.setComposerState("chat-a", {
+      provider: "claude",
+      model: "sonnet",
+      modelOptions: { reasoningEffort: "low", contextWindow: "1m" },
+      planMode: false,
+    })
+    store.setComposerState("chat-b", {
+      provider: "codex",
+      model: "gpt-5.3-codex",
+      modelOptions: { reasoningEffort: "minimal", fastMode: true },
+      planMode: true,
+    })
+    store.setChatComposerPlanMode("chat-a", true)
+
+    expect(store.getComposerState("chat-a")).toEqual({
       provider: "claude",
       model: "sonnet",
       modelOptions: { reasoningEffort: "low", contextWindow: "1m" },
       planMode: true,
     })
-    expect(state.providerDefaults).toEqual(INITIAL_STATE.providerDefaults)
+    expect(store.getComposerState("chat-b")).toEqual({
+      provider: "codex",
+      model: "gpt-5.3-codex",
+      modelOptions: { reasoningEffort: "minimal", fastMode: true },
+      planMode: true,
+    })
   })
 
-  test("switching Claude composer model clears unsupported context window values", () => {
-    useChatPreferencesStore.getState().setComposerModelOptions({ contextWindow: "1m" })
-    useChatPreferencesStore.getState().setComposerModel("haiku")
+  test("switching Claude chat model clears unsupported context window values", () => {
+    const store = useChatPreferencesStore.getState()
 
-    expect(useChatPreferencesStore.getState().composerState).toEqual({
+    store.setComposerState("chat-a", {
+      provider: "claude",
+      model: "opus",
+      modelOptions: { reasoningEffort: "high", contextWindow: "1m" },
+      planMode: false,
+    })
+    store.setChatComposerModel("chat-a", "haiku")
+
+    expect(store.getComposerState("chat-a")).toEqual({
       provider: "claude",
       model: "haiku",
       modelOptions: { reasoningEffort: "high", contextWindow: "200k" },
@@ -127,7 +159,7 @@ describe("chat preference store", () => {
     })
   })
 
-  test("resetComposerFromProvider copies provider defaults into composer state", () => {
+  test("resetChatComposerFromProvider copies provider defaults into the target chat", () => {
     useChatPreferencesStore.setState({
       ...INITIAL_STATE,
       providerDefaults: {
@@ -140,9 +172,9 @@ describe("chat preference store", () => {
       },
     })
 
-    useChatPreferencesStore.getState().resetComposerFromProvider("codex")
+    useChatPreferencesStore.getState().resetChatComposerFromProvider("chat-a", "codex")
 
-    expect(useChatPreferencesStore.getState().composerState).toEqual({
+    expect(useChatPreferencesStore.getState().getComposerState("chat-a")).toEqual({
       provider: "codex",
       model: "gpt-5.3-codex",
       modelOptions: { reasoningEffort: "minimal", fastMode: true },
@@ -150,16 +182,10 @@ describe("chat preference store", () => {
     })
   })
 
-  test("initializeComposerForNewChat uses explicit default provider defaults", () => {
+  test("initializeComposerForChat uses explicit provider defaults for new chats", () => {
     useChatPreferencesStore.setState({
       ...INITIAL_STATE,
       defaultProvider: "codex",
-      composerState: {
-        provider: "claude",
-        model: "haiku",
-        modelOptions: { reasoningEffort: "low", contextWindow: "200k" },
-        planMode: false,
-      },
       providerDefaults: {
         ...INITIAL_STATE.providerDefaults,
         codex: {
@@ -170,9 +196,9 @@ describe("chat preference store", () => {
       },
     })
 
-    useChatPreferencesStore.getState().initializeComposerForNewChat()
+    useChatPreferencesStore.getState().initializeComposerForChat("chat-a")
 
-    expect(useChatPreferencesStore.getState().composerState).toEqual({
+    expect(useChatPreferencesStore.getState().getComposerState("chat-a")).toEqual({
       provider: "codex",
       model: "gpt-5.3-codex-spark",
       modelOptions: { reasoningEffort: "minimal", fastMode: true },
@@ -180,21 +206,24 @@ describe("chat preference store", () => {
     })
   })
 
-  test("initializeComposerForNewChat preserves composer state for last used", () => {
+  test("initializeComposerForChat with last_used copies the provided source state", () => {
     useChatPreferencesStore.setState({
       ...INITIAL_STATE,
       defaultProvider: "last_used",
-      composerState: {
-        provider: "codex",
-        model: "gpt-5.3-codex",
-        modelOptions: { reasoningEffort: "low", fastMode: false },
-        planMode: true,
+      chatStates: {
+        [NEW_CHAT_COMPOSER_ID]: {
+          provider: "codex",
+          model: "gpt-5.3-codex",
+          modelOptions: { reasoningEffort: "low", fastMode: false },
+          planMode: true,
+        },
       },
     })
 
-    useChatPreferencesStore.getState().initializeComposerForNewChat()
+    const sourceState = useChatPreferencesStore.getState().getComposerState(NEW_CHAT_COMPOSER_ID)
+    useChatPreferencesStore.getState().initializeComposerForChat("chat-a", { sourceState })
 
-    expect(useChatPreferencesStore.getState().composerState).toEqual({
+    expect(useChatPreferencesStore.getState().getComposerState("chat-a")).toEqual({
       provider: "codex",
       model: "gpt-5.3-codex",
       modelOptions: { reasoningEffort: "low", fastMode: false },

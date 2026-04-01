@@ -27,6 +27,9 @@ import { ProjectSectionMenu } from "./Menus"
 
 interface Props {
   projectGroups: SidebarProjectGroup[]
+  editorLabel: string
+  finderShortcut?: string[]
+  editorShortcut?: string[]
   collapsedSections: Set<string>
   expandedGroups: Set<string>
   onToggleSection: (key: string) => void
@@ -34,6 +37,8 @@ interface Props {
   renderChatRow: (chat: SidebarChatRow) => ReactNode
   chatsPerProject: number
   onNewLocalChat?: (localPath: string) => void
+  onCopyPath?: (localPath: string) => void
+  onOpenExternalPath?: (action: "open_finder" | "open_editor", localPath: string) => void
   onRemoveProject?: (projectId: string) => void
   onReorderGroups?: (newOrder: string[]) => void
   isConnected?: boolean
@@ -42,6 +47,9 @@ interface Props {
 
 interface SortableProjectGroupProps {
   group: SidebarProjectGroup
+  editorLabel: string
+  finderShortcut?: string[]
+  editorShortcut?: string[]
   collapsedSections: Set<string>
   expandedGroups: Set<string>
   onToggleSection: (key: string) => void
@@ -49,6 +57,8 @@ interface SortableProjectGroupProps {
   renderChatRow: (chat: SidebarChatRow) => ReactNode
   chatsPerProject: number
   onNewLocalChat?: (localPath: string) => void
+  onCopyPath?: (localPath: string) => void
+  onOpenExternalPath?: (action: "open_finder" | "open_editor", localPath: string) => void
   onRemoveProject?: (projectId: string) => void
   isConnected?: boolean
   startingLocalPath?: string | null
@@ -56,6 +66,9 @@ interface SortableProjectGroupProps {
 
 function SortableProjectGroup({
   group,
+  editorLabel,
+  finderShortcut,
+  editorShortcut,
   collapsedSections,
   expandedGroups,
   onToggleSection,
@@ -63,6 +76,8 @@ function SortableProjectGroup({
   renderChatRow,
   chatsPerProject,
   onNewLocalChat,
+  onCopyPath,
+  onOpenExternalPath,
   onRemoveProject,
   isConnected,
   startingLocalPath,
@@ -161,8 +176,16 @@ function SortableProjectGroup({
       )}
       {...attributes}
     >
-      {onRemoveProject ? (
-        <ProjectSectionMenu onRemove={() => onRemoveProject(groupKey)}>
+      {onRemoveProject && onCopyPath && onOpenExternalPath ? (
+        <ProjectSectionMenu
+          editorLabel={editorLabel}
+          finderShortcut={finderShortcut}
+          editorShortcut={editorShortcut}
+          onCopyPath={() => onCopyPath(localPath)}
+          onOpenInFinder={() => onOpenExternalPath("open_finder", localPath)}
+          onOpenInEditor={() => onOpenExternalPath("open_editor", localPath)}
+          onRemove={() => onRemoveProject(groupKey)}
+        >
           {header}
         </ProjectSectionMenu>
       ) : header}
@@ -186,6 +209,9 @@ function SortableProjectGroup({
 
 export function LocalProjectsSection({
   projectGroups,
+  editorLabel,
+  finderShortcut,
+  editorShortcut,
   collapsedSections,
   expandedGroups,
   onToggleSection,
@@ -193,6 +219,8 @@ export function LocalProjectsSection({
   renderChatRow,
   chatsPerProject,
   onNewLocalChat,
+  onCopyPath,
+  onOpenExternalPath,
   onRemoveProject,
   onReorderGroups,
   isConnected,
@@ -248,20 +276,25 @@ export function LocalProjectsSection({
     >
       <SortableContext items={groupIds} strategy={verticalListSortingStrategy}>
         {projectGroups.map((group) => (
-          <SortableProjectGroup
-            key={group.groupKey}
-            group={group}
-            collapsedSections={collapsedSections}
-            expandedGroups={expandedGroups}
-            onToggleSection={onToggleSection}
-            onToggleExpandedGroup={onToggleExpandedGroup}
-            renderChatRow={renderChatRow}
-            chatsPerProject={chatsPerProject}
-            onNewLocalChat={onNewLocalChat}
-            onRemoveProject={onRemoveProject}
-            isConnected={isConnected}
-            startingLocalPath={startingLocalPath}
-          />
+        <SortableProjectGroup
+          key={group.groupKey}
+          group={group}
+          editorLabel={editorLabel}
+          finderShortcut={finderShortcut}
+          editorShortcut={editorShortcut}
+          collapsedSections={collapsedSections}
+          expandedGroups={expandedGroups}
+          onToggleSection={onToggleSection}
+          onToggleExpandedGroup={onToggleExpandedGroup}
+          renderChatRow={renderChatRow}
+          chatsPerProject={chatsPerProject}
+          onNewLocalChat={onNewLocalChat}
+          onCopyPath={onCopyPath}
+          onOpenExternalPath={onOpenExternalPath}
+          onRemoveProject={onRemoveProject}
+          isConnected={isConnected}
+          startingLocalPath={startingLocalPath}
+        />
         ))}
       </SortableContext>
     </DndContext>

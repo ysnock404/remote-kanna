@@ -51,9 +51,17 @@ function KannaLayout() {
         onDeleteChat={(chat) => {
           void state.handleDeleteChat(chat)
         }}
+        onCopyPath={(localPath) => {
+          void state.handleCopyPath(localPath)
+        }}
+        onOpenExternalPath={(action, localPath) => {
+          void state.handleOpenExternalPath(action, localPath)
+        }}
         onRemoveProject={(projectId) => {
           void state.handleRemoveProject(projectId)
         }}
+        editorLabel={state.editorLabel}
+        keybindings={state.keybindings}
         updateSnapshot={state.updateSnapshot}
         onInstallUpdate={() => {
           void state.handleInstallUpdate()
