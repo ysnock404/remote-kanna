@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { Trash2 } from "lucide-react"
+import { Code, Copy, FolderOpen, Trash2 } from "lucide-react"
 import {
   ContextMenu,
   ContextMenuContent,
@@ -8,9 +8,17 @@ import {
 } from "../../ui/context-menu"
 
 export function ProjectSectionMenu({
+  editorLabel,
+  onCopyPath,
+  onOpenInFinder,
+  onOpenInEditor,
   onRemove,
   children,
 }: {
+  editorLabel: string
+  onCopyPath: () => void
+  onOpenInFinder: () => void
+  onOpenInEditor: () => void
   onRemove: () => void
   children: ReactNode
 }) {
@@ -23,11 +31,38 @@ export function ProjectSectionMenu({
         <ContextMenuItem
           onSelect={(event) => {
             event.stopPropagation()
+            onCopyPath()
+          }}
+        >
+          <Copy className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">Copy Path</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.stopPropagation()
+            onOpenInFinder()
+          }}
+        >
+          <FolderOpen className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">Show in Finder</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.stopPropagation()
+            onOpenInEditor()
+          }}
+        >
+          <Code className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">Open in {editorLabel}</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.stopPropagation()
             onRemove()
           }}
           className="text-destructive dark:text-red-400 hover:bg-destructive/10 focus:bg-destructive/10 dark:hover:bg-red-500/20 dark:focus:bg-red-500/20"
         >
-          <Trash2 className="h-4 w-4" />
+          <Trash2 className="h-3.5 w-3.5" />
           <span className="text-xs font-medium">Remove</span>
         </ContextMenuItem>
       </ContextMenuContent>

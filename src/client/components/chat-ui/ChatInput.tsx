@@ -16,7 +16,7 @@ import { ScrollArea } from "../ui/scroll-area"
 import { cn } from "../../lib/utils"
 import { useIsStandalone } from "../../hooks/useIsStandalone"
 import { useChatInputStore } from "../../stores/chatInputStore"
-import { type ComposerState, useChatPreferencesStore } from "../../stores/chatPreferencesStore"
+import { NEW_CHAT_COMPOSER_ID, type ComposerState, useChatPreferencesStore } from "../../stores/chatPreferencesStore"
 import { CHAT_INPUT_ATTRIBUTE, focusNextChatInput } from "../../app/chatFocusPolicy"
 import { ChatPreferenceControls } from "./ChatPreferenceControls"
 import { AttachmentFileCard, AttachmentImageCard } from "../messages/AttachmentCard"
@@ -26,6 +26,13 @@ import { classifyAttachmentPreview } from "../messages/attachmentPreview"
 const MAX_FILES_PER_DROP = 10
 const MAX_CONCURRENT_UPLOADS = 3
 
+const CLIPBOARD_EXTENSION_BY_MIME_TYPE: Record<string, string> = {
+  "image/gif": "gif",
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+}
+
 export function willExceedAttachmentLimit(args: {
   currentAttachmentCount: number
   queuedAttachmentCount: number
@@ -34,6 +41,51 @@ export function willExceedAttachmentLimit(args: {
 }) {
   const maxAttachments = args.maxAttachments ?? MAX_FILES_PER_DROP
   return args.currentAttachmentCount + args.queuedAttachmentCount + args.incomingAttachmentCount > maxAttachments
+}
+
+type ClipboardFileItem = Pick<DataTransferItem, "kind" | "type" | "getAsFile">
+
+function hasClipboardTextPayload(clipboardData: DataTransfer | null | undefined) {
+  if (!clipboardData) return false
+  return clipboardData.types.includes("text/plain") || clipboardData.types.includes("text/html")
+}
+
+function getClipboardImageExtension(file: File) {
+  return CLIPBOARD_EXTENSION_BY_MIME_TYPE[file.type] ?? "bin"
+}
+
+function isGenericClipboardImageName(file: File) {
+  const normalized = file.name.trim().toLowerCase()
+  if (!normalized) return true
+
+  const expectedExtension = getClipboardImageExtension(file)
+  return normalized === `image.${expectedExtension}` || normalized === "image.png"
+}
+
+function normalizeClipboardImageFile(file: File, index: number, timestamp: number) {
+  if (file.name && !isGenericClipboardImageName(file)) return file
+
+  const extension = getClipboardImageExtension(file)
+  const suffix = index === 0 ? "" : `-${index}`
+  const fileName = `clipboard-${timestamp}${suffix}.${extension}`
+  Object.defineProperty(file, "name", {
+    configurable: true,
+    value: fileName,
+  })
+  return file
+}
+
+export function getClipboardImageFiles(items: Iterable<ClipboardFileItem>, timestamp: number) {
+  const files: File[] = []
+
+  for (const item of items) {
+    if (item.kind !== "file" || !item.type.startsWith("image/")) continue
+    const file = item.getAsFile()
+    if (!file) continue
+    files.push(normalizeClipboardImageFile(file, files.length, timestamp))
+  }
+
+  return files
 }
 
 interface ComposerAttachment extends ChatAttachment {
@@ -84,71 +136,28 @@ function logChatInput(message: string, details?: unknown) {
   console.info(`[ChatInput] ${message}`, details)
 }
 
-function createLockedComposerState(
-  provider: AgentProvider,
+function getEffectiveComposerState(
   composerState: ComposerState,
+  activeProvider: AgentProvider | null,
   providerDefaults: ReturnType<typeof useChatPreferencesStore.getState>["providerDefaults"]
 ): ComposerState {
-  if (provider === "claude") {
-    if (composerState.provider === "claude") {
-      return {
-        provider: "claude",
-        model: composerState.model,
-        modelOptions: { ...composerState.modelOptions },
-        planMode: composerState.planMode,
-      }
-    }
+  if (!activeProvider || composerState.provider === activeProvider) {
+    return composerState
+  }
 
-    return {
+  return activeProvider === "claude"
+    ? {
       provider: "claude",
       model: providerDefaults.claude.model,
       modelOptions: { ...providerDefaults.claude.modelOptions },
-      planMode: providerDefaults.claude.planMode,
-    }
-  }
-
-  if (composerState.provider === "codex") {
-    return {
-      provider: "codex",
-      model: composerState.model,
-      modelOptions: { ...composerState.modelOptions },
       planMode: composerState.planMode,
     }
-  }
-
-  return {
-    provider: "codex",
-    model: providerDefaults.codex.model,
-    modelOptions: { ...providerDefaults.codex.modelOptions },
-    planMode: providerDefaults.codex.planMode,
-  }
-}
-
-export function resolvePlanModeState(args: {
-  providerLocked: boolean
-  planMode: boolean
-  selectedProvider: AgentProvider
-  composerState: ComposerState
-  providerDefaults: ReturnType<typeof useChatPreferencesStore.getState>["providerDefaults"]
-  lockedComposerState: ComposerState | null
-}) {
-  if (!args.providerLocked) {
-    return {
-      composerPlanMode: args.planMode,
-      lockedComposerState: args.lockedComposerState,
+    : {
+      provider: "codex",
+      model: providerDefaults.codex.model,
+      modelOptions: { ...providerDefaults.codex.modelOptions },
+      planMode: composerState.planMode,
     }
-  }
-
-  const nextLockedState = args.lockedComposerState
-    ?? createLockedComposerState(args.selectedProvider, args.composerState, args.providerDefaults)
-
-  return {
-    composerPlanMode: args.composerState.planMode,
-    lockedComposerState: {
-      ...nextLockedState,
-      planMode: args.planMode,
-    } satisfies ComposerState,
-  }
 }
 
 const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
@@ -171,20 +180,20 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     clearAttachmentDrafts,
   } = useChatInputStore()
   const {
-    composerState,
     providerDefaults,
-    setComposerModel,
-    setComposerModelOptions,
-    setComposerPlanMode,
-    resetComposerFromProvider,
+    getComposerState,
+    initializeComposerForChat,
+    setChatComposerModel,
+    setChatComposerPlanMode,
+    resetChatComposerFromProvider,
   } = useChatPreferencesStore()
+  const composerChatId = chatId ?? NEW_CHAT_COMPOSER_ID
+  const storedComposerState = useChatPreferencesStore((state) => state.chatStates[composerChatId])
+  const composerState = storedComposerState ?? getComposerState(composerChatId)
   const [value, setValue] = useState(() => (chatId ? getDraft(chatId) : ""))
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const isStandalone = useIsStandalone()
-  const [lockedComposerState, setLockedComposerState] = useState<ComposerState | null>(() => (
-    activeProvider ? createLockedComposerState(activeProvider, composerState, providerDefaults) : null
-  ))
   const [attachments, setAttachments] = useState<ComposerAttachment[]>(() => hydrateComposerAttachments(chatId ? getAttachmentDrafts(chatId) : []))
   const [selectedAttachmentId, setSelectedAttachmentId] = useState<string | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
@@ -197,9 +206,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const latestChatIdRef = useRef<string | null>(chatId ?? null)
 
   const providerLocked = activeProvider !== null
-  const providerPrefs = providerLocked
-    ? lockedComposerState ?? createLockedComposerState(activeProvider, composerState, providerDefaults)
-    : composerState
+  const providerPrefs = getEffectiveComposerState(composerState, activeProvider, providerDefaults)
   const selectedProvider = providerLocked ? activeProvider : composerState.provider
   const providerConfig = availableProviders.find((provider) => provider.id === selectedProvider) ?? availableProviders[0]
   const showPlanMode = providerConfig?.supportsPlanMode ?? false
@@ -271,13 +278,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, [chatId])
 
   useEffect(() => {
-    if (activeProvider === null) {
-      setLockedComposerState(null)
-      return
-    }
-
-    setLockedComposerState(createLockedComposerState(activeProvider, composerState, providerDefaults))
-  }, [activeProvider, chatId, composerState, providerDefaults])
+    initializeComposerForChat(composerChatId)
+  }, [composerChatId, initializeComposerForChat])
 
   useEffect(() => {
     uploadGenerationRef.current += 1
@@ -316,9 +318,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       effectiveModel: providerPrefs.model,
       selectedProvider,
       providerLocked,
-      lockedComposerProvider: lockedComposerState?.provider ?? null,
     })
-  }, [activeProvider, chatId, composerState.model, composerState.provider, lockedComposerState?.provider, providerLocked, providerPrefs.model, providerPrefs.provider, selectedProvider])
+  }, [activeProvider, chatId, composerState.model, composerState.provider, providerLocked, providerPrefs.model, providerPrefs.provider, selectedProvider])
 
   useEffect(() => {
     attachmentsRef.current = attachments
@@ -343,60 +344,30 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     attachmentsRef.current.forEach(cleanupAttachmentPreview)
   }, [cleanupAttachmentPreview])
 
-  function updateLockedOrComposer(
-    transform: (state: ComposerState) => ComposerState,
-    fallback: () => void
-  ) {
-    if (providerLocked) {
-      setLockedComposerState((current) => {
-        const next = current ?? createLockedComposerState(selectedProvider, composerState, providerDefaults)
-        return transform(next)
-      })
-      return
-    }
-    fallback()
+  function updateComposerState(transform: (state: ComposerState) => ComposerState) {
+    useChatPreferencesStore.getState().setComposerState(composerChatId, transform(providerPrefs))
   }
 
   function setReasoningEffort(reasoningEffort: string) {
-    updateLockedOrComposer(
-      (state) => ({
-        ...state,
-        modelOptions: { ...state.modelOptions, reasoningEffort: reasoningEffort as ClaudeReasoningEffort & CodexReasoningEffort },
-      } as ComposerState),
-      () => selectedProvider === "claude"
-        ? setComposerModelOptions({ reasoningEffort: reasoningEffort as ClaudeReasoningEffort })
-        : setComposerModelOptions({ reasoningEffort: reasoningEffort as CodexReasoningEffort })
-    )
+    updateComposerState((state) => ({
+      ...state,
+      modelOptions: { ...state.modelOptions, reasoningEffort: reasoningEffort as ClaudeReasoningEffort & CodexReasoningEffort },
+    } as ComposerState))
   }
 
   function setClaudeContextWindow(contextWindow: ClaudeContextWindow) {
-    updateLockedOrComposer(
+    updateComposerState(
       (state) => state.provider !== "claude"
         ? state
         : withNormalizedContextWindow(
             { ...state, modelOptions: { ...state.modelOptions, contextWindow } },
             state.model
-          ),
-      () => setComposerModelOptions({ contextWindow })
+          )
     )
   }
 
   function setEffectivePlanMode(planMode: boolean) {
-    const nextState = resolvePlanModeState({
-      providerLocked,
-      planMode,
-      selectedProvider,
-      composerState,
-      providerDefaults,
-      lockedComposerState,
-    })
-
-    if (nextState.lockedComposerState !== lockedComposerState) {
-      setLockedComposerState(nextState.lockedComposerState)
-    }
-    if (nextState.composerPlanMode !== composerState.planMode) {
-      setComposerPlanMode(nextState.composerPlanMode)
-    }
+    setChatComposerPlanMode(composerChatId, planMode)
   }
 
   function toggleEffectivePlanMode() {
@@ -582,6 +553,17 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     }
   }
 
+  function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const files = getClipboardImageFiles(event.clipboardData.items, Date.now())
+    if (files.length === 0) return
+
+    enqueueFiles(files)
+
+    if (!hasClipboardTextPayload(event.clipboardData)) {
+      event.preventDefault()
+    }
+  }
+
   function handleAttachmentPreview(attachment: ComposerAttachment) {
     const target = classifyAttachmentPreview(attachment)
     if (target.openInNewTab) {
@@ -687,6 +669,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 if (chatId) setDraft(chatId, event.target.value)
                 autoResize()
               }}
+              onPaste={handlePaste}
               onKeyDown={handleKeyDown}
               disabled={disabled}
               className="flex-1 text-base p-3 md:p-4 !pr-2 pl-0 md:pl-6 resize-none max-h-[200px] outline-none bg-transparent border-0 shadow-none"
@@ -731,13 +714,14 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           modelOptions={providerPrefs.modelOptions}
           onProviderChange={(provider) => {
             if (providerLocked) return
-            resetComposerFromProvider(provider)
+            resetChatComposerFromProvider(composerChatId, provider)
           }}
           onModelChange={(_, model) => {
-            updateLockedOrComposer(
-              (state) => withNormalizedContextWindow(state, model),
-              () => setComposerModel(model)
-            )
+            if (providerLocked) {
+              updateComposerState((state) => withNormalizedContextWindow(state, model))
+              return
+            }
+            setChatComposerModel(composerChatId, model)
           }}
           onModelOptionChange={(change) => {
             switch (change.type) {
@@ -751,11 +735,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 setClaudeContextWindow(change.contextWindow)
                 break
               case "fastMode":
-                updateLockedOrComposer(
+                updateComposerState(
                   (state) => state.provider === "claude"
                     ? state
-                    : { ...state, modelOptions: { ...state.modelOptions, fastMode: change.fastMode } },
-                  () => setComposerModelOptions({ fastMode: change.fastMode })
+                    : { ...state, modelOptions: { ...state.modelOptions, fastMode: change.fastMode } }
                 )
                 break
             }

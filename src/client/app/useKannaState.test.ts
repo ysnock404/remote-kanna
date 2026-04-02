@@ -4,6 +4,7 @@ import {
   getNewestRemainingChatId,
   getUiUpdateRestartReconnectAction,
   resolveComposeIntent,
+  shouldMarkActiveChatRead,
   shouldAutoFollowTranscript,
 } from "./useKannaState"
 import type { ChatSnapshot, SidebarData } from "../../shared/types"
@@ -21,6 +22,7 @@ function createSidebarData(): SidebarData {
             chatId: "chat-3",
             title: "Newest",
             status: "idle",
+            unread: false,
             localPath: "/tmp/project-1",
             provider: null,
             lastMessageAt: 3,
@@ -32,6 +34,7 @@ function createSidebarData(): SidebarData {
             chatId: "chat-2",
             title: "Older",
             status: "idle",
+            unread: false,
             localPath: "/tmp/project-1",
             provider: null,
             lastMessageAt: 2,
@@ -43,6 +46,7 @@ function createSidebarData(): SidebarData {
             chatId: "chat-1",
             title: "Oldest",
             status: "idle",
+            unread: false,
             localPath: "/tmp/project-1",
             provider: null,
             lastMessageAt: 1,
@@ -60,6 +64,7 @@ function createSidebarData(): SidebarData {
             chatId: "chat-4",
             title: "Other project",
             status: "idle",
+            unread: false,
             localPath: "/tmp/project-2",
             provider: null,
             lastMessageAt: 1,
@@ -102,6 +107,25 @@ describe("shouldAutoFollowTranscript", () => {
 
   test("returns false when the transcript is not near the bottom", () => {
     expect(shouldAutoFollowTranscript(24)).toBe(false)
+  })
+})
+
+describe("shouldMarkActiveChatRead", () => {
+  test("returns true only when the page is visible and focused", () => {
+    expect(shouldMarkActiveChatRead({
+      visibilityState: "visible",
+      hasFocus: () => true,
+    })).toBe(true)
+
+    expect(shouldMarkActiveChatRead({
+      visibilityState: "hidden",
+      hasFocus: () => true,
+    })).toBe(false)
+
+    expect(shouldMarkActiveChatRead({
+      visibilityState: "visible",
+      hasFocus: () => false,
+    })).toBe(false)
   })
 })
 

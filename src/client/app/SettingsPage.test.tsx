@@ -12,6 +12,7 @@ import {
   resetSettingsPageChangelogCache,
   resolveSettingsSectionId,
   setCachedChangelog,
+  shouldPreviewChatSoundChange,
 } from "./SettingsPage"
 import { SettingsHeaderButton } from "../components/ui/settings-header-button"
 
@@ -199,6 +200,15 @@ describe("getGeneralHeaderAction", () => {
       label: "Update",
       variant: "default",
     })
+  })
+})
+
+describe("shouldPreviewChatSoundChange", () => {
+  test("previews only when the selected value actually changes", () => {
+    expect(shouldPreviewChatSoundChange("always", "always")).toBe(false)
+    expect(shouldPreviewChatSoundChange("always", "never")).toBe(true)
+    expect(shouldPreviewChatSoundChange("never", "unfocused")).toBe(true)
+    expect(shouldPreviewChatSoundChange("funk", "glass")).toBe(true)
   })
 })
 

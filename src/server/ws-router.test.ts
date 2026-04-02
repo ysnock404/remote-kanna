@@ -176,6 +176,187 @@ describe("ws-router", () => {
     })
   })
 
+  test("marks chats read and rebroadcasts sidebar snapshots", async () => {
+    const state = createEmptyState()
+    state.projectsById.set("project-1", {
+      id: "project-1",
+      localPath: "/tmp/project",
+      title: "Project",
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    state.projectIdsByPath.set("/tmp/project", "project-1")
+    state.chatsById.set("chat-1", {
+      id: "chat-1",
+      projectId: "project-1",
+      title: "Chat",
+      createdAt: 1,
+      updatedAt: 1,
+      unread: true,
+      provider: null,
+      planMode: false,
+      sessionToken: null,
+      lastTurnOutcome: null,
+    })
+
+    const store = {
+      state,
+      async setChatReadState(chatId: string, unread: boolean) {
+        const chat = state.chatsById.get(chatId)
+        if (!chat) throw new Error("Chat not found")
+        chat.unread = unread
+      },
+    }
+
+    const router = createWsRouter({
+      store: store as never,
+      agent: { getActiveStatuses: () => new Map() } as never,
+      terminals: {
+        getSnapshot: () => null,
+        onEvent: () => () => {},
+      } as never,
+      keybindings: {
+        getSnapshot: () => DEFAULT_KEYBINDINGS_SNAPSHOT,
+        onChange: () => () => {},
+      } as never,
+      refreshDiscovery: async () => [],
+      getDiscoveredProjects: () => [],
+      machineDisplayName: "Local Machine",
+      updateManager: null,
+    })
+    const wsA = new FakeWebSocket()
+    const wsB = new FakeWebSocket()
+
+    router.handleOpen(wsA as never)
+    router.handleOpen(wsB as never)
+
+    router.handleMessage(
+      wsA as never,
+      JSON.stringify({
+        v: 1,
+        type: "subscribe",
+        id: "sidebar-a",
+        topic: { type: "sidebar" },
+      })
+    )
+    router.handleMessage(
+      wsB as never,
+      JSON.stringify({
+        v: 1,
+        type: "subscribe",
+        id: "sidebar-b",
+        topic: { type: "sidebar" },
+      })
+    )
+
+    router.handleMessage(
+      wsA as never,
+      JSON.stringify({
+        v: 1,
+        type: "command",
+        id: "mark-read-1",
+        command: { type: "chat.markRead", chatId: "chat-1" },
+      })
+    )
+
+    await Promise.resolve()
+
+    expect(wsA.sent.at(-2)).toEqual({
+      v: PROTOCOL_VERSION,
+      type: "ack",
+      id: "mark-read-1",
+    })
+    expect(wsA.sent.at(-1)).toEqual({
+      v: PROTOCOL_VERSION,
+      type: "snapshot",
+      id: "sidebar-a",
+      snapshot: {
+        type: "sidebar",
+        data: {
+          projectGroups: [{
+            groupKey: "project-1",
+            localPath: "/tmp/project",
+            chats: [{
+              _id: "chat-1",
+              _creationTime: 1,
+              chatId: "chat-1",
+              title: "Chat",
+              status: "idle",
+              unread: false,
+              localPath: "/tmp/project",
+              provider: null,
+              lastMessageAt: undefined,
+              hasAutomation: false,
+            }],
+          }],
+        },
+      },
+    })
+    expect(wsB.sent.at(-1)).toEqual({
+      v: PROTOCOL_VERSION,
+      type: "snapshot",
+      id: "sidebar-b",
+      snapshot: {
+        type: "sidebar",
+        data: {
+          projectGroups: [{
+            groupKey: "project-1",
+            localPath: "/tmp/project",
+            chats: [{
+              _id: "chat-1",
+              _creationTime: 1,
+              chatId: "chat-1",
+              title: "Chat",
+              status: "idle",
+              unread: false,
+              localPath: "/tmp/project",
+              provider: null,
+              lastMessageAt: undefined,
+              hasAutomation: false,
+            }],
+          }],
+        },
+      },
+    })
+  })
+
+  test("broadcasts background title-generation errors to connected clients", () => {
+    let reportBackgroundError: ((message: string) => void) | null | undefined
+    const router = createWsRouter({
+      store: { state: createEmptyState() } as never,
+      agent: {
+        getActiveStatuses: () => new Map(),
+        setBackgroundErrorReporter: (reporter: ((message: string) => void) | null) => {
+          reportBackgroundError = reporter
+        },
+      } as never,
+      terminals: {
+        getSnapshot: () => null,
+        onEvent: () => () => {},
+      } as never,
+      keybindings: {
+        getSnapshot: () => DEFAULT_KEYBINDINGS_SNAPSHOT,
+        onChange: () => () => {},
+      } as never,
+      refreshDiscovery: async () => [],
+      getDiscoveredProjects: () => [],
+      machineDisplayName: "Local Machine",
+      updateManager: null,
+    })
+    const ws = new FakeWebSocket()
+    router.handleOpen(ws as never)
+
+    reportBackgroundError?.("[title-generation] chat chat-1 failed")
+
+    expect(ws.sent).toEqual([
+      {
+        v: PROTOCOL_VERSION,
+        type: "error",
+        message: "[title-generation] chat chat-1 failed",
+      },
+    ])
+  })
+
   test("subscribes to keybindings snapshots and writes keybindings through the router", async () => {
     const initialSnapshot: KeybindingsSnapshot = DEFAULT_KEYBINDINGS_SNAPSHOT
     const keybindings = {

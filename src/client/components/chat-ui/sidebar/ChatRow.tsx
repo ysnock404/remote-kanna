@@ -43,6 +43,13 @@ export function ChatRow({
             <div className=" rounded-full z-0 size-2.5 bg-blue-400 ring-2 ring-muted/20 dark:ring-muted/50" />
           </div>
         </div>
+      ) : chat.unread ? (
+        <div className="relative ">
+          <div className=" rounded-full z-0 size-3.5 flex items-center justify-center ">
+            <div className="absolute rounded-full z-0 size-2.5 bg-emerald-400/80 animate-ping" />
+            <div className=" rounded-full z-0 size-2.5 bg-emerald-400 ring-2 ring-muted/20 dark:ring-muted/50" />
+          </div>
+        </div>
       ) : null}
       <span className="text-sm truncate flex-1 translate-y-[-0.5px]">
         {chat.status !== "idle" && chat.status !== "waiting_for_user" ? (

@@ -192,6 +192,7 @@ export interface SidebarChatRow {
   chatId: string
   title: string
   status: KannaStatus
+  unread: boolean
   localPath: string
   provider: AgentProvider | null
   lastMessageAt?: number

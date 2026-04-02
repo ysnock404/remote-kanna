@@ -65,6 +65,7 @@ describe("EventStore", () => {
         title: "Chat",
         createdAt: 1,
         updatedAt: 5,
+        unread: false,
         provider: null,
         planMode: false,
         sessionToken: null,
@@ -129,5 +130,69 @@ describe("EventStore", () => {
     const snapshot = JSON.parse(await readFile(join(dataDir, "snapshot.json"), "utf8")) as SnapshotFile
     expect(snapshot.messages).toBeUndefined()
     expect(existsSync(join(dataDir, "transcripts", `${chat.id}.jsonl`))).toBe(true)
+  })
+
+  test("marks chats unread on completed turns and clears unread when marked read", async () => {
+    const dataDir = await createTempDataDir()
+    const store = new EventStore(dataDir)
+    await store.initialize()
+
+    const project = await store.openProject("/tmp/project")
+    const chat = await store.createChat(project.id)
+
+    expect(store.getChat(chat.id)?.unread).toBe(false)
+
+    await store.recordTurnFinished(chat.id)
+    expect(store.getChat(chat.id)?.unread).toBe(true)
+
+    await store.setChatReadState(chat.id, false)
+    expect(store.getChat(chat.id)?.unread).toBe(false)
+
+    await store.recordTurnFailed(chat.id, "boom")
+    expect(store.getChat(chat.id)?.unread).toBe(true)
+
+    await store.recordTurnCancelled(chat.id)
+    expect(store.getChat(chat.id)?.unread).toBe(true)
+
+    await store.compact()
+
+    const reloaded = new EventStore(dataDir)
+    await reloaded.initialize()
+    expect(reloaded.getChat(chat.id)?.unread).toBe(true)
+  })
+
+  test("loads chats without unread from older snapshots as read", async () => {
+    const dataDir = await createTempDataDir()
+    const snapshotPath = join(dataDir, "snapshot.json")
+
+    const snapshot = {
+      v: 2,
+      generatedAt: 10,
+      projects: [{
+        id: "project-1",
+        localPath: "/tmp/project",
+        title: "Project",
+        createdAt: 1,
+        updatedAt: 5,
+      }],
+      chats: [{
+        id: "chat-1",
+        projectId: "project-1",
+        title: "Chat",
+        createdAt: 1,
+        updatedAt: 5,
+        provider: null,
+        planMode: false,
+        sessionToken: null,
+        lastTurnOutcome: null,
+      }],
+    }
+
+    await writeFile(snapshotPath, JSON.stringify(snapshot, null, 2), "utf8")
+
+    const store = new EventStore(dataDir)
+    await store.initialize()
+
+    expect(store.getChat("chat-1")?.unread).toBe(false)
   })
 })

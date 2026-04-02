@@ -24,7 +24,10 @@ interface KannaSidebarProps {
   onExpand: () => void
   onCreateChat: (projectId: string) => void
   onDeleteChat: (chat: SidebarChatRow) => void
+  onCopyPath: (localPath: string) => void
+  onOpenExternalPath: (action: "open_finder" | "open_editor", localPath: string) => void
   onRemoveProject: (projectId: string) => void
+  editorLabel: string
   updateSnapshot: UpdateSnapshot | null
   onInstallUpdate: () => void
 }
@@ -43,7 +46,10 @@ export function KannaSidebar({
   onExpand,
   onCreateChat,
   onDeleteChat,
+  onCopyPath,
+  onOpenExternalPath,
   onRemoveProject,
+  editorLabel,
   updateSnapshot,
   onInstallUpdate,
 }: KannaSidebarProps) {
@@ -73,7 +79,6 @@ export function KannaSidebar({
 
     return ordered
   }, [data.projectGroups, savedOrder])
-
   const handleReorderGroups = useCallback(
     (newOrder: string[]) => setGroupOrder(newOrder),
     [setGroupOrder]
@@ -299,6 +304,7 @@ export function KannaSidebar({
 
             <LocalProjectsSection
               projectGroups={orderedProjectGroups}
+              editorLabel={editorLabel}
               onReorderGroups={handleReorderGroups}
               collapsedSections={collapsedSections}
               expandedGroups={expandedGroups}
@@ -312,6 +318,8 @@ export function KannaSidebar({
                   onCreateChat(projectId)
                 }
               }}
+              onCopyPath={onCopyPath}
+              onOpenExternalPath={onOpenExternalPath}
               onRemoveProject={onRemoveProject}
               isConnected={connectionStatus === "connected"}
             />

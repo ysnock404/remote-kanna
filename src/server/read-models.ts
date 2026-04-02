@@ -35,6 +35,7 @@ export function deriveSidebarData(
         chatId: chat.id,
         title: chat.title,
         status: deriveStatus(chat, activeStatuses.get(chat.id)),
+        unread: chat.unread,
         localPath: project.localPath,
         provider: chat.provider,
         lastMessageAt: chat.lastMessageAt,

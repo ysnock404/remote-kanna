@@ -127,6 +127,10 @@ describe("attachment prompt helpers", () => {
 
 describe("AgentCoordinator codex integration", () => {
   test("generates a chat title in the background on the first user message", async () => {
+    let releaseTitle!: () => void
+    const titleGate = new Promise<void>((resolve) => {
+      releaseTitle = resolve
+    })
     const fakeCodexManager = {
       async startSession() {},
       async startTurn(): Promise<HarnessTurn> {
@@ -169,7 +173,14 @@ describe("AgentCoordinator codex integration", () => {
       store: store as never,
       onStateChange: () => {},
       codexManager: fakeCodexManager as never,
-      generateTitle: async () => "Generated title",
+      generateTitle: async () => {
+        await titleGate
+        return {
+          title: "Generated title",
+          usedFallback: false,
+          failureMessage: null,
+        }
+      },
     })
 
     await coordinator.send({
@@ -180,6 +191,8 @@ describe("AgentCoordinator codex integration", () => {
       model: "gpt-5.4",
     })
 
+    expect(store.chat.title).toBe("first message")
+    releaseTitle()
     await waitFor(() => store.chat.title === "Generated title")
     expect(store.messages[0]?.kind).toBe("user_prompt")
   })
@@ -233,7 +246,11 @@ describe("AgentCoordinator codex integration", () => {
       codexManager: fakeCodexManager as never,
       generateTitle: async () => {
         await titleGate
-        return "Generated title"
+        return {
+          title: "Generated title",
+          usedFallback: false,
+          failureMessage: null,
+        }
       },
     })
 
@@ -250,6 +267,76 @@ describe("AgentCoordinator codex integration", () => {
     await waitFor(() => store.turnFinishedCount === 1)
 
     expect(store.chat.title).toBe("Manual title")
+  })
+
+  test("reports provider failure without a second rename after the optimistic title", async () => {
+    const fakeCodexManager = {
+      async startSession() {},
+      async startTurn(): Promise<HarnessTurn> {
+        async function* stream() {
+          yield {
+            type: "transcript" as const,
+            entry: timestamped({
+              kind: "system_init",
+              provider: "codex",
+              model: "gpt-5.4",
+              tools: [],
+              agents: [],
+              slashCommands: [],
+              mcpServers: [],
+            }),
+          }
+          yield {
+            type: "transcript" as const,
+            entry: timestamped({
+              kind: "result",
+              subtype: "success",
+              isError: false,
+              durationMs: 0,
+              result: "",
+            }),
+          }
+        }
+
+        return {
+          provider: "codex",
+          stream: stream(),
+          interrupt: async () => {},
+          close: () => {},
+        }
+      },
+    }
+
+    const store = createFakeStore()
+    const backgroundErrors: string[] = []
+    const coordinator = new AgentCoordinator({
+      store: store as never,
+      onStateChange: () => {},
+      codexManager: fakeCodexManager as never,
+      generateTitle: async () => ({
+        title: "first message",
+        usedFallback: true,
+        failureMessage: "claude failed conversation title generation: Not authenticated",
+      }),
+    })
+    coordinator.setBackgroundErrorReporter((message) => {
+      backgroundErrors.push(message)
+    })
+
+    await coordinator.send({
+      type: "chat.send",
+      chatId: "chat-1",
+      provider: "codex",
+      content: "first message",
+      model: "gpt-5.4",
+    })
+
+    expect(store.chat.title).toBe("first message")
+    await waitFor(() => store.turnFinishedCount === 1)
+    expect(store.chat.title).toBe("first message")
+    expect(backgroundErrors).toEqual([
+      "[title-generation] chat chat-1 failed provider title generation: claude failed conversation title generation: Not authenticated",
+    ])
   })
 
   test("binds codex provider and reuses the session token on later turns", async () => {
