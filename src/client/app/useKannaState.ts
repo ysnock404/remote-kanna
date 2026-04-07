@@ -54,6 +54,7 @@ function sameDiffs(left: ChatSnapshot["diffs"] | null | undefined, right: ChatSn
   if (!left || !right) return false
   if (left.status !== right.status) return false
   if (left.branchName !== right.branchName) return false
+  if (left.hasUpstream !== right.hasUpstream) return false
   if (left.files.length !== right.files.length) return false
   return left.files.every((file, index) => {
     const other = right.files[index]

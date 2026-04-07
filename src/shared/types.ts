@@ -479,8 +479,32 @@ export interface ChatDiffFile {
 export interface ChatDiffSnapshot {
   status: "unknown" | "ready" | "no_repo"
   branchName?: string
+  hasUpstream?: boolean
   files: ChatDiffFile[]
 }
+
+export type DiffCommitMode = "commit_and_push" | "commit_only"
+
+export interface DiffCommitSuccess {
+  ok: true
+  mode: DiffCommitMode
+  branchName?: string
+  pushed: boolean
+  snapshotChanged: boolean
+}
+
+export interface DiffCommitFailure {
+  ok: false
+  mode: DiffCommitMode
+  phase: "commit" | "push"
+  title: string
+  message: string
+  detail?: string
+  localCommitCreated?: boolean
+  snapshotChanged?: boolean
+}
+
+export type DiffCommitResult = DiffCommitSuccess | DiffCommitFailure
 
 export interface ContextWindowUpdatedEntry extends TranscriptEntryBase {
   kind: "context_window_updated"

@@ -1,13 +1,14 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react"
 import { ArrowDown, Flower, Upload } from "lucide-react"
 import { useOutletContext } from "react-router-dom"
-import type { ChatDiffSnapshot } from "../../shared/types"
+import type { ChatDiffSnapshot, DiffCommitMode, DiffCommitResult } from "../../shared/types"
 import { ChatInput, type ChatInputHandle } from "../components/chat-ui/ChatInput"
 import { ChatNavbar } from "../components/chat-ui/ChatNavbar"
 import { RightSidebar } from "../components/chat-ui/RightSidebar"
 import { TerminalWorkspace } from "../components/chat-ui/TerminalWorkspace"
 import { DrainingIndicator } from "../components/messages/DrainingIndicator"
 import { ProcessingMessage } from "../components/messages/ProcessingMessage"
+import { useAppDialog } from "../components/ui/app-dialog"
 import { Card, CardContent } from "../components/ui/card"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "../components/ui/resizable"
 import { actionMatchesEvent, getResolvedKeybindings } from "../lib/keybindings"
@@ -112,14 +113,8 @@ const ChatTranscriptViewport = memo(function ChatTranscriptViewport({
   }, [hasOlderHistory, isHistoryLoading, loadOlderHistory, scrollRef])
 
   const Header = useCallback(() => (
-    <div className="animate-fade-in pt-[72px] max-w-[800px] mx-auto">
-      {isHistoryLoading ? (
-        <div className="pb-4 text-center text-xs text-muted-foreground">
-          Loading older messages...
-        </div>
-      ) : null}
-    </div>
-  ), [isHistoryLoading])
+    <div className="animate-fade-in pt-[72px] max-w-[800px] mx-auto" />
+  ), [])
 
   const Footer = useCallback(() => (
     <div className="animate-fade-in max-w-[800px] mx-auto">
@@ -378,6 +373,7 @@ function joinProjectRelativePath(projectPath: string, filePath: string) {
 
 export function ChatPage() {
   const state = useOutletContext<KannaState>()
+  const dialog = useAppDialog()
   const layoutRootRef = useRef<HTMLDivElement>(null)
   const chatCardRef = useRef<HTMLDivElement>(null)
   const chatInputElementRef = useRef<HTMLTextAreaElement>(null)
@@ -496,20 +492,33 @@ export function ChatPage() {
     void state.handleOpenLocalLink({ path: resolvedPath })
   }, [state.handleOpenLocalLink])
 
-  const handleCommitDiffs = useCallback(async (args: { paths: string[]; summary: string; description: string }) => {
+  const handleCommitDiffs = useCallback(async (args: { paths: string[]; summary: string; description: string; mode: DiffCommitMode }) => {
     const chatId = activeChatIdRef.current
     if (!chatId) {
-      return
+      return null
     }
-    await state.socket.command({
+    const result = await state.socket.command<DiffCommitResult>({
       type: "chat.commitDiffs",
       chatId,
       paths: args.paths,
       summary: args.summary,
       description: args.description,
+      mode: args.mode,
     })
-    refreshDiffs()
-  }, [refreshDiffs, state.socket])
+    if (result.snapshotChanged) {
+      refreshDiffs()
+    }
+    if (!result.ok) {
+      await dialog.alert({
+        title: result.title,
+        description: result.localCommitCreated
+          ? `${result.message}\n\nA local commit was created, but the push did not complete.${result.detail ? `\n\n${result.detail}` : ""}`
+          : `${result.message}${result.detail ? `\n\n${result.detail}` : ""}`,
+        closeLabel: "OK",
+      })
+    }
+    return result
+  }, [dialog, refreshDiffs, state.socket])
 
   const handleGenerateCommitMessage = useCallback(async (args: { paths: string[] }) => {
     const chatId = activeChatIdRef.current

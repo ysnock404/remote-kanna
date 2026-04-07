@@ -1,13 +1,14 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import type { ChatDiffFile, ChatDiffSnapshot } from "../shared/types"
+import type { ChatDiffFile, ChatDiffSnapshot, DiffCommitMode, DiffCommitResult } from "../shared/types"
 import { generateCommitMessageDetailed } from "./generate-commit-message"
 import { inferProjectFileContentType } from "./uploads"
 
 interface StoredChatDiffState {
   status: ChatDiffSnapshot["status"]
   branchName?: string
+  hasUpstream?: boolean
   files: ChatDiffFile[]
 }
 
@@ -15,6 +16,7 @@ function createEmptyState(): StoredChatDiffState {
   return {
     status: "unknown",
     branchName: undefined,
+    hasUpstream: undefined,
     files: [],
   }
 }
@@ -25,6 +27,7 @@ function snapshotsEqual(left: StoredChatDiffState | undefined, right: StoredChat
   }
   if (left.status !== right.status) return false
   if (left.branchName !== right.branchName) return false
+  if (left.hasUpstream !== right.hasUpstream) return false
   if (left.files.length !== right.files.length) return false
   return left.files.every((file, index) => {
     const other = right.files[index]
@@ -68,6 +71,61 @@ async function runGit(args: string[], cwd: string) {
   }
 }
 
+function formatGitFailure(result: Awaited<ReturnType<typeof runGit>>) {
+  return [result.stderr.trim(), result.stdout.trim()].filter(Boolean).join("\n")
+}
+
+function summarizeGitFailure(detail: string, fallback: string) {
+  return detail
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0)
+    ?? fallback
+}
+
+function createCommitFailure(mode: DiffCommitMode, detail: string): DiffCommitResult {
+  const message = summarizeGitFailure(detail, "Git could not create the commit.")
+  return {
+    ok: false,
+    mode,
+    phase: "commit",
+    title: "Commit failed",
+    message,
+    detail,
+  }
+}
+
+function createPushFailure(mode: DiffCommitMode, detail: string, snapshotChanged: boolean): DiffCommitResult {
+  const normalized = detail.toLowerCase()
+  let title = "Push failed"
+  let message = summarizeGitFailure(detail, "Git could not push the commit.")
+
+  if (normalized.includes("non-fast-forward") || normalized.includes("fetch first")) {
+    title = "Branch is not up to date"
+    message = "Your branch is behind its remote. Pull or rebase, then try pushing again."
+  } else if (normalized.includes("has no upstream branch") || normalized.includes("set-upstream")) {
+    title = "No upstream branch configured"
+    message = "This branch does not have an upstream remote branch configured yet."
+  } else if (normalized.includes("merge conflict") || normalized.includes("resolve conflicts")) {
+    title = "Merge conflicts need resolution"
+    message = "Git reported conflicts while preparing the push. Resolve them, then try again."
+  } else if (normalized.includes("permission denied") || normalized.includes("authentication failed") || normalized.includes("could not read from remote repository")) {
+    title = "Remote authentication failed"
+    message = "Git could not authenticate with the remote repository."
+  }
+
+  return {
+    ok: false,
+    mode,
+    phase: "push",
+    title,
+    message,
+    detail,
+    localCommitCreated: true,
+    snapshotChanged,
+  }
+}
+
 async function resolveRepo(projectPath: string): Promise<{ repoRoot: string; baseCommit: string | null } | null> {
   const topLevel = await runGit(["rev-parse", "--show-toplevel"], projectPath)
   if (topLevel.exitCode !== 0) {
@@ -94,6 +152,11 @@ async function getBranchName(repoRoot: string) {
   }
 
   return undefined
+}
+
+async function hasUpstreamBranch(repoRoot: string) {
+  const upstream = await runGit(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], repoRoot)
+  return upstream.exitCode === 0 && upstream.stdout.trim().length > 0
 }
 
 function parseStatusPaths(output: string): DirtyPathEntry[] {
@@ -255,6 +318,7 @@ export class DiffStore {
     return {
       status: state.status,
       branchName: state.branchName,
+      hasUpstream: state.hasUpstream,
       files: [...state.files],
     }
   }
@@ -265,6 +329,7 @@ export class DiffStore {
       const nextState = {
         status: "no_repo",
         branchName: undefined,
+        hasUpstream: undefined,
         files: [],
       } satisfies StoredChatDiffState
       const changed = !snapshotsEqual(this.states.get(chatId), nextState)
@@ -274,9 +339,11 @@ export class DiffStore {
 
     const files = await computeCurrentFiles(repo.repoRoot, repo.baseCommit)
     const branchName = await getBranchName(repo.repoRoot)
+    const hasUpstream = await hasUpstreamBranch(repo.repoRoot)
     const nextState = {
       status: "ready",
       branchName,
+      hasUpstream,
       files,
     } satisfies StoredChatDiffState
     const changed = !snapshotsEqual(this.states.get(chatId), nextState)
@@ -321,6 +388,7 @@ export class DiffStore {
     paths: string[]
     summary: string
     description?: string
+    mode: DiffCommitMode
   }) {
     const summary = args.summary.trim()
     const description = args.description?.trim()
@@ -357,9 +425,33 @@ export class DiffStore {
 
     const commitResult = await runGit(commitArgs, repo.repoRoot)
     if (commitResult.exitCode !== 0) {
-      throw new Error(commitResult.stderr.trim() || commitResult.stdout.trim() || "Failed to commit selected files")
+      return createCommitFailure(args.mode, formatGitFailure(commitResult))
     }
 
-    return await this.refreshSnapshot(args.chatId, args.projectPath)
+    const snapshotChanged = await this.refreshSnapshot(args.chatId, args.projectPath)
+    const branchName = await getBranchName(repo.repoRoot)
+
+    if (args.mode === "commit_only") {
+      return {
+        ok: true,
+        mode: args.mode,
+        branchName,
+        pushed: false,
+        snapshotChanged,
+      } satisfies DiffCommitResult
+    }
+
+    const pushResult = await runGit(["push"], repo.repoRoot)
+    if (pushResult.exitCode !== 0) {
+      return createPushFailure(args.mode, formatGitFailure(pushResult), snapshotChanged)
+    }
+
+    return {
+      ok: true,
+      mode: args.mode,
+      branchName,
+      pushed: true,
+      snapshotChanged,
+    } satisfies DiffCommitResult
   }
 }

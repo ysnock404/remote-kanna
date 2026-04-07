@@ -57,10 +57,10 @@ export function createWsRouter({
 }: CreateWsRouterArgs) {
   const sockets = new Set<ServerWebSocket<ClientState>>()
   const resolvedDiffStore = diffStore ?? {
-    getSnapshot: () => ({ status: "unknown", branchName: undefined, files: [] as const }),
+    getSnapshot: () => ({ status: "unknown", branchName: undefined, hasUpstream: undefined, files: [] as const }),
     refreshSnapshot: async () => false,
     generateCommitMessage: async () => ({ subject: "Update selected files", body: "", usedFallback: true, failureMessage: null }),
-    commitFiles: async () => false,
+    commitFiles: async () => ({ ok: true, mode: "commit_only" as const, branchName: undefined, pushed: false, snapshotChanged: false }),
   }
 
   function createEnvelope(id: string, topic: SubscriptionTopic): ServerEnvelope {
@@ -393,15 +393,16 @@ export function createWsRouter({
           if (!project) {
             throw new Error("Project not found")
           }
-          const changed = await resolvedDiffStore.commitFiles({
+          const result = await resolvedDiffStore.commitFiles({
             chatId: command.chatId,
             projectPath: project.localPath,
             paths: command.paths,
             summary: command.summary,
             description: command.description,
+            mode: command.mode,
           })
-          send(ws, { v: PROTOCOL_VERSION, type: "ack", id })
-          if (changed) {
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result })
+          if (result.snapshotChanged) {
             broadcastSnapshots()
           }
           return

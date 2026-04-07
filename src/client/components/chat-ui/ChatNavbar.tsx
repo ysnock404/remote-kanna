@@ -112,7 +112,7 @@ export function ChatNavbar({
                       onClick={onToggleEmbeddedTerminal}
                       className={cn(
                         "border border-border/0",
-                        embeddedTerminalVisible && "text-white"
+                        embeddedTerminalVisible && "text-foreground"
                       )}
                     >
                       <Terminal className="h-4.5 w-4.5" />
@@ -148,7 +148,7 @@ export function ChatNavbar({
                   onClick={onToggleRightSidebar}
                   className={cn(
                     "border border-border/0",
-                    rightSidebarVisible && "text-white"
+                    rightSidebarVisible && "text-foreground"
                   )}
                 >
                   <GitCompare className="h-4.5 w-4.5" />

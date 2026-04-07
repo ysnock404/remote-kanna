@@ -1,7 +1,7 @@
 import { PatchDiff } from "@pierre/diffs/react"
 import { Check, ChevronDown, ChevronUp, Columns2, ExternalLink, Rows3, SquareArrowRight, SquareDot, SquareMinus, SquarePlus, WrapText, X } from "lucide-react"
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react"
-import type { ChatAttachment, ChatDiffSnapshot } from "../../../shared/types"
+import type { ChatAttachment, ChatDiffSnapshot, DiffCommitMode, DiffCommitResult } from "../../../shared/types"
 import { useStickyState } from "../../hooks/useStickyState"
 import { cn } from "../../lib/utils"
 import { useDiffCommitStore } from "../../stores/diffCommitStore"
@@ -9,6 +9,7 @@ import { AttachmentFileCard, AttachmentImageCard } from "../messages/AttachmentC
 import { AttachmentPreviewModal } from "../messages/AttachmentPreviewModal"
 import { classifyAttachmentPreview } from "../messages/attachmentPreview"
 import { Button } from "../ui/button"
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "../ui/context-menu"
 import { Input } from "../ui/input"
 import { Textarea } from "../ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip"
@@ -45,7 +46,7 @@ interface RightSidebarProps {
   wrapLines: boolean
   onOpenFile: (path: string) => void
   onGenerateCommitMessage: (args: { paths: string[] }) => Promise<{ subject: string; body: string }>
-  onCommit: (args: { paths: string[]; summary: string; description: string }) => Promise<void>
+  onCommit: (args: { paths: string[]; summary: string; description: string; mode: DiffCommitMode }) => Promise<DiffCommitResult | null>
   onDiffRenderModeChange: (mode: DiffRenderMode) => void
   onWrapLinesChange: (wrap: boolean) => void
   onClose: () => void
@@ -100,7 +101,7 @@ function IconButton(props: {
 
 function ChangeTypeBadge({ changeType }: { changeType: DiffFile["changeType"] }) {
   if (changeType === "modified") {
-    return <SquareDot className="h-3.5 w-3.5 shrink-0 text-yellow-600 dark:text-yellow-400" />
+    return <SquareDot className="h-3.5 w-3.5 shrink-0 text-blue-400 dark:text-blue-300" />
   }
 
   if (changeType === "added") {
@@ -260,6 +261,7 @@ function DiffFileCard({
               options={{
                 diffStyle: diffRenderMode,
                 disableFileHeader: true,
+                disableBackground: false,
                 overflow: wrapLines ? "wrap" : "scroll",
                 lineDiffType: "word",
                 diffIndicators: "classic",
@@ -294,7 +296,7 @@ function RightSidebarImpl({
   const [summary, setSummary] = useState("")
   const [description, setDescription] = useState("")
   const [isGenerating, setIsGenerating] = useState(false)
-  const [isCommitting, setIsCommitting] = useState(false)
+  const [commitModeInFlight, setCommitModeInFlight] = useState<DiffCommitMode | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const filePaths = useMemo(() => diffs.files.map((file) => file.path), [diffs.files])
   const filePathsKey = useMemo(() => filePaths.join("\u0000"), [filePaths])
@@ -330,6 +332,7 @@ function RightSidebarImpl({
   const selectedCount = selectedPaths.length
   const trimmedSummary = summary.trim()
   const hasSummary = trimmedSummary.length > 0
+  const isCommitting = commitModeInFlight !== null
   const isBusy = isGenerating || isCommitting
   const canGenerate = diffs.status === "ready"
     && selectedCount > 0
@@ -338,20 +341,24 @@ function RightSidebarImpl({
     && selectedCount > 0
     && hasSummary
     && !isBusy
+  const primaryCommitMode: DiffCommitMode = diffs.hasUpstream ? "commit_and_push" : "commit_only"
 
-  async function handleCommit() {
+  async function handleCommit(mode: DiffCommitMode) {
     if (!canCommit) return
-    setIsCommitting(true)
+    setCommitModeInFlight(mode)
     try {
-      await onCommit({
+      const result = await onCommit({
         paths: selectedPaths,
         summary: trimmedSummary,
         description: description.trim(),
+        mode,
       })
-      setSummary("")
-      setDescription("")
+      if (result?.ok || result?.localCommitCreated) {
+        setSummary("")
+        setDescription("")
+      }
     } finally {
-      setIsCommitting(false)
+      setCommitModeInFlight(null)
     }
   }
 
@@ -373,7 +380,7 @@ function RightSidebarImpl({
     }
     event.preventDefault()
     if (hasSummary) {
-      void handleCommit()
+      void handleCommit(primaryCommitMode)
       return
     }
     void handleGenerate()
@@ -480,26 +487,45 @@ function RightSidebarImpl({
                   className="-mt-px rounded-t-none rounded-b-none px-3 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 focus-visible:border-border"
                   disabled={isBusy || diffs.status !== "ready"}
                 />
-                <Button
-                  type="button"
-                  className="-mt-px w-full rounded-t-none rounded-b-xl"
-                  disabled={hasSummary ? !canCommit : !canGenerate}
-                  onClick={() => {
-                    if (hasSummary) {
-                      void handleCommit()
-                      return
-                    }
-                    void handleGenerate()
-                  }}
-                >
-                  {hasSummary
-                    ? (isCommitting
-                      ? "Committing..."
-                      : `Commit ${selectedCount} ${selectedCount === 1 ? "file" : "files"} to ${diffs.branchName ?? "current branch"}`)
-                    : (isGenerating
-                      ? "Generating..."
-                      : `Generate message for ${selectedCount} ${selectedCount === 1 ? "file" : "files"} on ${diffs.branchName ?? "current branch"}`)}
-                </Button>
+                <ContextMenu>
+                  <ContextMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      className="-mt-px w-full rounded-t-none rounded-b-xl"
+                      disabled={hasSummary ? !canCommit : !canGenerate}
+                      onClick={() => {
+                        if (hasSummary) {
+                          void handleCommit(primaryCommitMode)
+                          return
+                        }
+                        void handleGenerate()
+                      }}
+                    >
+                      {hasSummary
+                        ? (isCommitting
+                          ? (commitModeInFlight === "commit_only" ? "Committing..." : "Committing & Pushing...")
+                          : diffs.hasUpstream
+                            ? `Commit & Push ${selectedCount} ${selectedCount === 1 ? "file" : "files"} to ${diffs.branchName ?? "current branch"}`
+                            : `Commit ${selectedCount} ${selectedCount === 1 ? "file" : "files"} to ${diffs.branchName ?? "current branch"}`)
+                        : (isGenerating
+                          ? "Generating..."
+                          : `Generate message for ${selectedCount} ${selectedCount === 1 ? "file" : "files"} on ${diffs.branchName ?? "current branch"}`)}
+                    </Button>
+                  </ContextMenuTrigger>
+                  {diffs.hasUpstream ? (
+                    <ContextMenuContent>
+                      <ContextMenuItem
+                        disabled={!hasSummary || !canCommit}
+                        onSelect={(event) => {
+                          event.stopPropagation()
+                          void handleCommit("commit_only")
+                        }}
+                      >
+                        Commit Only
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                  ) : null}
+                </ContextMenu>
               </div>
             </div>
           </div>

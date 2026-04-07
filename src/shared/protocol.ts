@@ -3,6 +3,7 @@ import type {
   ChatAttachment,
   ChatHistoryPage,
   ChatSnapshot,
+  DiffCommitMode,
   KeybindingsSnapshot,
   LocalProjectsSnapshot,
   ModelOptions,
@@ -78,7 +79,7 @@ export type ClientCommand =
     }
   | { type: "chat.refreshDiffs"; chatId: string }
   | { type: "chat.generateCommitMessage"; chatId: string; paths: string[] }
-  | { type: "chat.commitDiffs"; chatId: string; paths: string[]; summary: string; description?: string }
+  | { type: "chat.commitDiffs"; chatId: string; paths: string[]; summary: string; description?: string; mode: DiffCommitMode }
   | { type: "chat.cancel"; chatId: string }
   | { type: "chat.stopDraining"; chatId: string }
   | { type: "chat.loadHistory"; chatId: string; beforeCursor: string; limit: number }

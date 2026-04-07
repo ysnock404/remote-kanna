@@ -94,6 +94,7 @@ describe("DiffStore", () => {
       paths: ["app.txt"],
       summary: "Update app",
       description: "Only app changes",
+      mode: "commit_only",
     })
 
     const snapshot = store.getSnapshot("chat-1")
