@@ -55,6 +55,9 @@ function sameDiffs(left: ChatSnapshot["diffs"] | null | undefined, right: ChatSn
   if (left.status !== right.status) return false
   if (left.branchName !== right.branchName) return false
   if (left.hasUpstream !== right.hasUpstream) return false
+  if (left.aheadCount !== right.aheadCount) return false
+  if (left.behindCount !== right.behindCount) return false
+  if (left.lastFetchedAt !== right.lastFetchedAt) return false
   const leftHistory = left.branchHistory?.entries ?? []
   const rightHistory = right.branchHistory?.entries ?? []
   if (leftHistory.length !== rightHistory.length) return false

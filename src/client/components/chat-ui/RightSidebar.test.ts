@@ -35,8 +35,12 @@ describe("RightSidebar", () => {
         onIgnoreFile: () => {},
         onCopyFilePath: () => {},
         onCopyRelativePath: () => {},
+        onListBranches: async () => ({ recent: [], local: [], remote: [], pullRequests: [], pullRequestsStatus: "unavailable" }),
+        onCheckoutBranch: async () => {},
+        onCreateBranch: async () => {},
         onGenerateCommitMessage: async () => ({ subject: "", body: "" }),
         onCommit: async () => null,
+        onSyncWithRemote: async () => null,
         onDiffRenderModeChange: () => {},
         onWrapLinesChange: () => {},
         onClose: () => {},
@@ -45,6 +49,7 @@ describe("RightSidebar", () => {
 
     expect(markup).toContain("History")
     expect(markup).toContain("Initial commit")
+    expect(markup).toContain("main")
     expect(markup).not.toContain("No file changes.")
   })
 
@@ -58,6 +63,7 @@ describe("RightSidebar", () => {
         diffs: {
           status: "ready",
           branchName: "main",
+          behindCount: 3,
           files: [{
             path: "src/app.ts",
             changeType: "modified",
@@ -74,8 +80,12 @@ describe("RightSidebar", () => {
         onIgnoreFile: () => {},
         onCopyFilePath: () => {},
         onCopyRelativePath: () => {},
+        onListBranches: async () => ({ recent: [], local: [], remote: [], pullRequests: [], pullRequestsStatus: "unavailable" }),
+        onCheckoutBranch: async () => {},
+        onCreateBranch: async () => {},
         onGenerateCommitMessage: async () => ({ subject: "", body: "" }),
         onCommit: async () => null,
+        onSyncWithRemote: async () => null,
         onDiffRenderModeChange: () => {},
         onWrapLinesChange: () => {},
         onClose,
@@ -83,10 +93,12 @@ describe("RightSidebar", () => {
     ))
 
     expect(markup).toContain("src/app.ts")
-    expect(markup).toContain("Close right sidebar")
+    expect(markup).toContain("Open branch switcher")
+    expect(markup).toContain("Pull")
+    expect(markup).toContain("3")
   })
 
-  test("renders the close affordance", () => {
+  test("renders the branch switcher affordance", () => {
     const onClose = mock(() => {})
     const markup = renderToStaticMarkup(createElement(
       TooltipProvider,
@@ -102,15 +114,19 @@ describe("RightSidebar", () => {
         onIgnoreFile: () => {},
         onCopyFilePath: () => {},
         onCopyRelativePath: () => {},
+        onListBranches: async () => ({ recent: [], local: [], remote: [], pullRequests: [], pullRequestsStatus: "unavailable" }),
+        onCheckoutBranch: async () => {},
+        onCreateBranch: async () => {},
         onGenerateCommitMessage: async () => ({ subject: "", body: "" }),
         onCommit: async () => null,
+        onSyncWithRemote: async () => null,
         onDiffRenderModeChange: () => {},
         onWrapLinesChange: () => {},
         onClose,
       })
     ))
 
-    expect(markup).toContain("Close right sidebar")
+    expect(markup).toContain("Open branch switcher")
   })
 
   test("ignores only untracked files", () => {
