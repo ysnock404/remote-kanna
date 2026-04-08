@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { SidebarChatRow } from "../../shared/types"
-import { getSidebarChatBuckets } from "./sidebarChats"
+import { getSidebarChatBuckets, shouldDefaultCollapseSidebarProject } from "./sidebarChats"
 
 const nowMs = 1_000_000
 const hourMs = 60 * 60 * 1_000
@@ -55,5 +55,25 @@ describe("getSidebarChatBuckets", () => {
       collapsedChats: chats.slice(0, 10),
       remainingChats: chats.slice(10),
     })
+  })
+})
+
+describe("shouldDefaultCollapseSidebarProject", () => {
+  test("returns false when the project has a chat within the last 24 hours", () => {
+    const chats = [
+      createChat("chat-1", nowMs - hourMs),
+      createChat("chat-2", nowMs - 25 * hourMs),
+    ]
+
+    expect(shouldDefaultCollapseSidebarProject(chats, nowMs)).toBe(false)
+  })
+
+  test("returns true when the project has no chats within the last 24 hours", () => {
+    const chats = [
+      createChat("chat-1", nowMs - 25 * hourMs),
+      createChat("chat-2"),
+    ]
+
+    expect(shouldDefaultCollapseSidebarProject(chats, nowMs)).toBe(true)
   })
 })

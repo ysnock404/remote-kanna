@@ -1829,7 +1829,7 @@ function RightSidebarImpl({
                         }}
                         onKeyDown={handleCommitKeyDown}
                         placeholder="Description"
-                        rows={3}
+                        rows={5}
                         className="-mt-px rounded-t-none rounded-b-xl px-3 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 focus-visible:border-border mb-2"
                         disabled={isBusy || diffs.status !== "ready"}
                       />

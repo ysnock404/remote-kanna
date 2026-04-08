@@ -6,6 +6,13 @@ export interface SidebarChatBuckets {
   remainingChats: SidebarChatRow[]
 }
 
+export function shouldDefaultCollapseSidebarProject(
+  chats: SidebarChatRow[],
+  nowMs: number
+) {
+  return chats.every((chat) => !isSidebarChatRecent(chat.lastMessageAt, nowMs))
+}
+
 export function getSidebarChatBuckets(
   chats: SidebarChatRow[],
   chatsPerProject: number,
