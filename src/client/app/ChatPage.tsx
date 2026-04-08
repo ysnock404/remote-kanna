@@ -284,6 +284,16 @@ const ChatTranscriptViewport = memo(function ChatTranscriptViewport({
     previousRowCountRef.current = currentCount
   }, [isHistoryLoading, resolvedRows.length, scrollRef])
 
+  useLayoutEffect(() => {
+    if (showScrollButton) return
+    if (pendingPrependAnchorRef.current) return
+
+    const scrollContainer = scrollRef.current
+    if (!scrollContainer) return
+
+    scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior: "auto" })
+  }, [isProcessing, resolvedRows.length, scrollRef, showScrollButton, transcriptContentWidth])
+
   const handleTranscriptScroll = useCallback(() => {
     onScrollChange()
     const scrollContainer = scrollRef.current

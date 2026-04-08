@@ -972,7 +972,7 @@ function RightSidebarImpl({
                 <p className="text-sm text-muted-foreground">No file changes.</p>
               </div>
             ) : (
-              <div className="space-y-1.5 p-1.5 pb-44">
+              <div className="space-y-1.5 p-1.5 pb-72">
                 {diffs.files.map((file) => {
                   const isCollapsed = collapsedPaths[file.path] ?? true
                   const isChecked = checkedPaths[file.path] ?? true
