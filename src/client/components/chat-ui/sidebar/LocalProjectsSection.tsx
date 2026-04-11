@@ -194,7 +194,7 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
               onClick={() => onToggleExpandedGroup(groupKey)}
               className="pl-2.5 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
-              Show recent
+              Hide older
             </button>
           ) : null}
           {isExpanded ? remainingChats.map(renderChatRow) : null}

@@ -56,9 +56,9 @@ describe("LocalProjectsSection", () => {
 
     const html = renderSection(projectGroups, new Set(["project-a"]))
 
-    expect(html).toContain("Show recent")
-    expect(html.indexOf("chat-1")).toBeLessThan(html.indexOf("Show recent"))
-    expect(html.indexOf("Show recent")).toBeLessThan(html.indexOf("chat-3"))
+    expect(html).toContain("Hide older")
+    expect(html.indexOf("chat-1")).toBeLessThan(html.indexOf("Hide older"))
+    expect(html.indexOf("Hide older")).toBeLessThan(html.indexOf("chat-3"))
   })
 
   test("shows the most recent 5 chats when there are no chats in the last 24 hours", () => {

@@ -17,7 +17,11 @@ Before prompting the user, do the following:
    - **major** — breaking changes, API changes, large rewrites
 4. Calculate what the new version number would be for each option (patch, minor, major).
 
-Then use the `AskUserQuestion` tool to present three options ordered by your recommendation (first = recommended, last = least likely). Each option should show the bump type and the resulting version number, e.g. "patch (0.1.0 → 0.1.1)". Add "(Recommended)" to the first option's label.
+If the user passed an explicit version as an argument (e.g. `/release 0.27.0`), use that version directly — skip the recommendation logic and confirmation.
+
+Otherwise, for **patch** and **minor** bumps, proceed automatically with your best recommendation — do NOT ask for confirmation. Just tell the user what you chose and why in a brief message before bumping.
+
+For **major** bumps only, use the `AskUserQuestion` tool to confirm with the user before proceeding, since major versions indicate breaking changes.
 
 ### Step 2: Bump version and push
 
