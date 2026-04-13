@@ -7,7 +7,6 @@ import type { AgentProvider, ChatHistoryPage, ChatHistorySnapshot, TranscriptEnt
 import { STORE_VERSION } from "../shared/types"
 import {
   type ChatEvent,
-  type MessageEvent,
   type ProjectEvent,
   type SnapshotFile,
   type StoreEvent,
@@ -19,7 +18,7 @@ import {
 import { resolveLocalPath } from "./paths"
 
 const COMPACTION_THRESHOLD_BYTES = 2 * 1024 * 1024
-const STALE_EMPTY_CHAT_MAX_AGE_MS = 5 * 60 * 1000
+const STALE_EMPTY_CHAT_MAX_AGE_MS = 30 * 60 * 1000
 interface LegacyTranscriptStats {
   hasLegacyData: boolean
   sources: Array<"snapshot" | "messages_log">
@@ -512,14 +511,18 @@ export class EventStore {
     now?: number
     maxAgeMs?: number
     activeChatIds?: Iterable<string>
+    protectedChatIds?: Iterable<string>
   }) {
     const now = args?.now ?? Date.now()
     const maxAgeMs = args?.maxAgeMs ?? STALE_EMPTY_CHAT_MAX_AGE_MS
-    const activeChatIds = new Set(args?.activeChatIds ?? [])
+    const protectedChatIds = new Set([
+      ...(args?.activeChatIds ?? []),
+      ...(args?.protectedChatIds ?? []),
+    ])
     const prunedChatIds: string[] = []
 
     for (const chat of this.state.chatsById.values()) {
-      if (chat.deletedAt || activeChatIds.has(chat.id)) continue
+      if (chat.deletedAt || protectedChatIds.has(chat.id)) continue
       if (now - chat.createdAt < maxAgeMs) continue
       if (this.getMessages(chat.id).length > 0) continue
 

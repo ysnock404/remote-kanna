@@ -296,6 +296,100 @@ describe("KannaTranscript", () => {
     expect(updatedRows[0]?.id).toBe("tool-group:tool-1")
   })
 
+  test("groups collapsible tools across hidden context window updates", () => {
+    const rows = buildResolvedTranscriptRows([
+      createToolMessage("tool-1"),
+      {
+        id: "context-window-1",
+        kind: "context_window_updated",
+        usage: { usedTokens: 100, maxTokens: 1000, compactsAutomatically: false },
+        timestamp: new Date().toISOString(),
+      },
+      createToolMessage("tool-2"),
+    ], {
+      isLoading: true,
+      latestToolIds: { AskUserQuestion: null, ExitPlanMode: null, TodoWrite: null },
+    })
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.kind).toBe("tool-group")
+    if (rows[0]?.kind !== "tool-group") throw new Error("unexpected row kind")
+    expect(rows[0].messages.map((message) => message.id)).toEqual(["tool-1", "tool-2"])
+  })
+
+  test("groups collapsible tools across hidden non-final status rows", () => {
+    const rows = buildResolvedTranscriptRows([
+      createToolMessage("tool-1"),
+      {
+        id: "status-1",
+        kind: "status",
+        status: "working",
+        timestamp: new Date().toISOString(),
+      },
+      createToolMessage("tool-2"),
+      {
+        id: "status-2",
+        kind: "status",
+        status: "done",
+        timestamp: new Date().toISOString(),
+      },
+    ], {
+      isLoading: true,
+      latestToolIds: { AskUserQuestion: null, ExitPlanMode: null, TodoWrite: null },
+    })
+
+    expect(rows).toHaveLength(2)
+    expect(rows[0]?.kind).toBe("tool-group")
+    if (rows[0]?.kind !== "tool-group") throw new Error("unexpected row kind")
+    expect(rows[0].messages.map((message) => message.id)).toEqual(["tool-1", "tool-2"])
+    expect(rows[1]?.kind).toBe("single")
+  })
+
+  test("groups collapsible tools across hidden short result rows", () => {
+    const rows = buildResolvedTranscriptRows([
+      createToolMessage("tool-1"),
+      {
+        id: "result-short-1",
+        kind: "result",
+        success: true,
+        cancelled: false,
+        result: "Done",
+        durationMs: 1000,
+        timestamp: new Date().toISOString(),
+      },
+      createToolMessage("tool-2"),
+    ], {
+      isLoading: true,
+      latestToolIds: { AskUserQuestion: null, ExitPlanMode: null, TodoWrite: null },
+    })
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.kind).toBe("tool-group")
+    if (rows[0]?.kind !== "tool-group") throw new Error("unexpected row kind")
+    expect(rows[0].messages.map((message) => message.id)).toEqual(["tool-1", "tool-2"])
+  })
+
+  test("does not group collapsible tools across visible transcript rows", () => {
+    const rows = buildResolvedTranscriptRows([
+      createToolMessage("tool-1"),
+      {
+        id: "assistant-1",
+        kind: "assistant_text",
+        text: "Visible text",
+        timestamp: new Date().toISOString(),
+      },
+      createToolMessage("tool-2"),
+    ], {
+      isLoading: true,
+      latestToolIds: { AskUserQuestion: null, ExitPlanMode: null, TodoWrite: null },
+    })
+
+    expect(rows).toHaveLength(3)
+    expect(rows[0]?.kind).toBe("single")
+    expect(rows[1]?.kind).toBe("single")
+    expect(rows[2]?.kind).toBe("single")
+  })
+
   test("renders grouped tools as expanded across rerenders while streaming when controlled", () => {
     const initialHtml = renderToStaticMarkup(
       <CollapsedToolGroup

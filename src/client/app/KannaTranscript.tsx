@@ -52,26 +52,116 @@ export interface ResolvedToolGroupTranscriptRow {
 
 export type ResolvedTranscriptRow = ResolvedSingleTranscriptRow | ResolvedToolGroupTranscriptRow
 
+interface TranscriptMessageRenderState {
+  isFirstSystem: boolean
+  isFirstAccount: boolean
+  isLatestTodoWrite: boolean
+  hideResult: boolean
+  isFinalStatus: boolean
+  shouldRender: boolean
+}
+
 function isCollapsibleToolCall(message: HydratedTranscriptMessage) {
   if (message.kind !== "tool") return false
   const toolName = (message as ProcessedToolCall).toolName
   return !SPECIAL_TOOL_NAMES.has(toolName)
 }
 
-export function buildTranscriptRenderItems(messages: HydratedTranscriptMessage[]): TranscriptRenderItem[] {
+function getTranscriptMessageRenderState(
+  message: HydratedTranscriptMessage,
+  {
+    isFirstSystem,
+    isFirstAccount,
+    isLatestTodoWrite,
+    hideResult,
+    isFinalStatus,
+  }: Omit<TranscriptMessageRenderState, "shouldRender">
+): TranscriptMessageRenderState {
+  let shouldRender = !message.hidden
+
+  if (shouldRender) {
+    switch (message.kind) {
+      case "system_init":
+        shouldRender = isFirstSystem
+        break
+      case "account_info":
+        shouldRender = isFirstAccount
+        break
+      case "tool":
+        shouldRender = message.toolKind !== "todo_write" || isLatestTodoWrite
+        break
+      case "result":
+        shouldRender = !hideResult && (!message.success || message.durationMs > 60000)
+        break
+      case "context_window_updated":
+        shouldRender = false
+        break
+      case "status":
+        shouldRender = isFinalStatus
+        break
+      default:
+        shouldRender = true
+        break
+    }
+  }
+
+  return {
+    isFirstSystem,
+    isFirstAccount,
+    isLatestTodoWrite,
+    hideResult,
+    isFinalStatus,
+    shouldRender,
+  }
+}
+
+function buildTranscriptMessageRenderStates(
+  messages: HydratedTranscriptMessage[],
+  latestToolIds: Record<string, string | null>
+) {
+  const firstSystemIndex = messages.findIndex((entry) => entry.kind === "system_init")
+  const firstAccountIndex = messages.findIndex((entry) => entry.kind === "account_info")
+
+  return messages.map<TranscriptMessageRenderState>((message, index) => {
+    const previousMessage = messages[index - 1]
+    const nextMessage = messages[index + 1]
+    return getTranscriptMessageRenderState(message, {
+      isFirstSystem: firstSystemIndex === index,
+      isFirstAccount: firstAccountIndex === index,
+      isLatestTodoWrite: message.id === latestToolIds.TodoWrite,
+      hideResult: nextMessage?.kind === "context_cleared" || previousMessage?.kind === "context_cleared",
+      isFinalStatus: index === messages.length - 1,
+    })
+  })
+}
+
+export function buildTranscriptRenderItems(
+  messages: HydratedTranscriptMessage[],
+  renderStates: TranscriptMessageRenderState[]
+): TranscriptRenderItem[] {
   const result: TranscriptRenderItem[] = []
   let index = 0
 
   while (index < messages.length) {
     const message = messages[index]
-    if (isCollapsibleToolCall(message)) {
+    const renderState = renderStates[index]
+    if (renderState?.shouldRender && isCollapsibleToolCall(message)) {
       const group: HydratedTranscriptMessage[] = [message]
       const startIndex = index
       index += 1
-      while (index < messages.length && isCollapsibleToolCall(messages[index])) {
-        group.push(messages[index])
+
+      while (index < messages.length) {
+        const nextMessage = messages[index]
+        const nextRenderState = renderStates[index]
+        if (!nextRenderState?.shouldRender) {
+          index += 1
+          continue
+        }
+        if (!isCollapsibleToolCall(nextMessage)) break
+        group.push(nextMessage)
         index += 1
       }
+
       if (group.length >= 2) {
         result.push({ type: "tool-group", messages: group, startIndex })
       } else {
@@ -94,42 +184,6 @@ function getTranscriptRenderItemId(item: TranscriptRenderItem) {
 
   const firstId = item.messages[0]?.id ?? item.startIndex
   return `tool-group:${firstId}`
-}
-
-function shouldRenderTranscriptSingleRow(
-  message: HydratedTranscriptMessage,
-  {
-    isFirstSystem,
-    isFirstAccount,
-    isLatestTodoWrite,
-    hideResult,
-    isFinalStatus,
-  }: {
-    isFirstSystem: boolean
-    isFirstAccount: boolean
-    isLatestTodoWrite: boolean
-    hideResult: boolean
-    isFinalStatus: boolean
-  }
-) {
-  if (message.hidden) return false
-
-  switch (message.kind) {
-    case "system_init":
-      return isFirstSystem
-    case "account_info":
-      return isFirstAccount
-    case "tool":
-      return message.toolKind !== "todo_write" || isLatestTodoWrite
-    case "result":
-      return !hideResult && (!message.success || message.durationMs > 60000)
-    case "context_window_updated":
-      return false
-    case "status":
-      return isFinalStatus
-    default:
-      return true
-  }
 }
 
 function sameStringArray(left: string[] | undefined, right: string[] | undefined) {
@@ -379,9 +433,8 @@ export function buildResolvedTranscriptRows(
     latestToolIds: Record<string, string | null>
   }
 ): ResolvedTranscriptRow[] {
-  const renderItems = buildTranscriptRenderItems(messages)
-  const firstSystemIndex = messages.findIndex((entry) => entry.kind === "system_init")
-  const firstAccountIndex = messages.findIndex((entry) => entry.kind === "account_info")
+  const renderStates = buildTranscriptMessageRenderStates(messages, latestToolIds)
+  const renderItems = buildTranscriptRenderItems(messages, renderStates)
   const rows: ResolvedTranscriptRow[] = []
 
   for (const item of renderItems) {
@@ -397,8 +450,8 @@ export function buildResolvedTranscriptRows(
       continue
     }
 
-    const previousMessage = messages[item.index - 1]
-    const nextMessage = messages[item.index + 1]
+    const renderState = renderStates[item.index]
+    if (!renderState) continue
     const row: ResolvedSingleTranscriptRow = {
       kind: "single",
       id: getTranscriptRenderItemId(item),
@@ -406,16 +459,16 @@ export function buildResolvedTranscriptRows(
       index: item.index,
       isLoading: item.message.kind === "tool" && item.message.result === undefined && isLoading,
       localPath,
-      isFirstSystem: firstSystemIndex === item.index,
-      isFirstAccount: firstAccountIndex === item.index,
+      isFirstSystem: renderState.isFirstSystem,
+      isFirstAccount: renderState.isFirstAccount,
       isLatestAskUserQuestion: item.message.id === latestToolIds.AskUserQuestion,
       isLatestExitPlanMode: item.message.id === latestToolIds.ExitPlanMode,
-      isLatestTodoWrite: item.message.id === latestToolIds.TodoWrite,
-      hideResult: nextMessage?.kind === "context_cleared" || previousMessage?.kind === "context_cleared",
-      isFinalStatus: item.index === messages.length - 1,
+      isLatestTodoWrite: renderState.isLatestTodoWrite,
+      hideResult: renderState.hideResult,
+      isFinalStatus: renderState.isFinalStatus,
     }
 
-    if (shouldRenderTranscriptSingleRow(row.message, row)) {
+    if (renderState.shouldRender) {
       rows.push(row)
     }
   }
