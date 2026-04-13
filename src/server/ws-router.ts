@@ -56,7 +56,9 @@ interface CreateWsRouterArgs {
 }
 
 function send(ws: ServerWebSocket<ClientState>, message: ServerEnvelope) {
-  ws.send(JSON.stringify(message))
+  const payload = JSON.stringify(message)
+  ws.send(payload)
+  return payload.length
 }
 
 function ensureSnapshotSignatures(ws: ServerWebSocket<ClientState>) {
@@ -240,9 +242,12 @@ export function createWsRouter({
     }
     const snapshotSignatures = ensureSnapshotSignatures(ws)
     for (const [id, topic] of ws.data.subscriptions.entries()) {
+      const envelopeStartedAt = performance.now()
       const envelope = createEnvelope(id, topic)
+      const createdAt = performance.now()
       if (envelope.type !== "snapshot") continue
       const signature = JSON.stringify(envelope.snapshot)
+      const signatureReadyAt = performance.now()
       if (snapshotSignatures.get(id) === signature) {
         continue
       }
@@ -253,9 +258,19 @@ export function createWsRouter({
           chatId: topic.chatId,
           status: envelope.snapshot.data.runtime.status,
           messageCount: envelope.snapshot.data.messages.length,
+          buildMs: Number((createdAt - envelopeStartedAt).toFixed(1)),
+          signatureMs: Number((signatureReadyAt - createdAt).toFixed(1)),
+          signatureBytes: signature.length,
         })
       }
-      send(ws, envelope)
+      const payloadBytes = send(ws, envelope)
+      if (topic.type === "chat" && envelope.snapshot.type === "chat" && envelope.snapshot.data?.runtime.status === "starting") {
+        const profile = agent.getActiveTurnProfile(topic.chatId)
+        logSendToStartingProfile(profile?.traceId, profile?.startedAt, "ws.snapshot_send_completed", {
+          chatId: topic.chatId,
+          payloadBytes,
+        })
+      }
     }
   }
 
@@ -473,7 +488,11 @@ export function createWsRouter({
           logSendToStartingProfile(profile?.traceId ?? command.clientTraceId, profile?.startedAt, "ws.chat_send_ack", {
             chatId: result.chatId ?? null,
           })
-          send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result })
+          const payloadBytes = send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result })
+          logSendToStartingProfile(profile?.traceId ?? command.clientTraceId, profile?.startedAt, "ws.chat_send_ack_completed", {
+            chatId: result.chatId ?? null,
+            payloadBytes,
+          })
           break
         }
         case "chat.refreshDiffs": {

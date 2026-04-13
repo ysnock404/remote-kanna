@@ -19,6 +19,22 @@ import { resolveLocalPath } from "./paths"
 
 const COMPACTION_THRESHOLD_BYTES = 2 * 1024 * 1024
 const STALE_EMPTY_CHAT_MAX_AGE_MS = 30 * 60 * 1000
+
+function isSendToStartingProfilingEnabled() {
+  return process.env.KANNA_PROFILE_SEND_TO_STARTING === "1"
+}
+
+function logSendToStartingProfile(stage: string, details?: Record<string, unknown>) {
+  if (!isSendToStartingProfilingEnabled()) {
+    return
+  }
+
+  console.log("[kanna/send->starting][server]", JSON.stringify({
+    stage,
+    ...details,
+  }))
+}
+
 interface LegacyTranscriptStats {
   hasLegacyData: boolean
   sources: Array<"snapshot" | "messages_log">
@@ -589,13 +605,27 @@ export class EventStore {
     this.requireChat(chatId)
     const payload = `${JSON.stringify(entry)}\n`
     const transcriptPath = this.transcriptPath(chatId)
+    const queuedAt = performance.now()
     this.writeChain = this.writeChain.then(async () => {
+      const startedAt = performance.now()
+      const queueDelayMs = Number((startedAt - queuedAt).toFixed(1))
       await mkdir(this.transcriptsDir, { recursive: true })
+      const beforeAppendAt = performance.now()
       await appendFile(transcriptPath, payload, "utf8")
+      const afterAppendAt = performance.now()
       this.applyMessageMetadata(chatId, entry)
       if (this.cachedTranscript?.chatId === chatId) {
         this.cachedTranscript.entries.push({ ...entry })
       }
+      logSendToStartingProfile("event_store.append_message", {
+        chatId,
+        entryId: entry._id,
+        kind: entry.kind,
+        payloadBytes: payload.length,
+        queueDelayMs,
+        appendMs: Number((afterAppendAt - beforeAppendAt).toFixed(1)),
+        totalMs: Number((afterAppendAt - queuedAt).toFixed(1)),
+      })
     })
     return this.writeChain
   }
