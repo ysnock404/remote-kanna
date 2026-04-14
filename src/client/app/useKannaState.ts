@@ -341,7 +341,7 @@ export function getUiUpdateRestartReconnectAction(
   return "none"
 }
 
-const FIXED_TRANSCRIPT_PADDING_BOTTOM = 150
+const FIXED_TRANSCRIPT_PADDING_BOTTOM = 140
 const UI_UPDATE_RESTART_STORAGE_KEY = "kanna:ui-update-restart"
 
 function getUiUpdateRestartPhase() {
