@@ -308,8 +308,19 @@ function KannaSidebarImpl({
           collapsed && "md:hidden"
         )}
       >
-        <div className=" pl-3 pr-[7px] h-[64px] max-h-[64px] md:h-[55px] md:max-h-[55px] border-b flex items-center justify-between">
-          <div className="flex items-center gap-2">
+        <div className="px-[5px] h-[64px] max-h-[64px] md:h-[55px] md:max-h-[55px] border-b grid grid-cols-[40px_minmax(0,1fr)_40px] items-center md:px-[7px] md:pl-3 md:flex md:justify-between">
+          <div className="md:hidden">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-10 rounded-lg hover:!border-border/0"
+              onClick={onClose}
+              title="Close sidebar"
+            >
+              <X className="h-5 w-5" />
+            </Button>
+          </div>
+          <div className="flex items-center justify-self-center gap-2 md:justify-self-auto">
             <button
               type="button"
               onClick={onCollapse}
@@ -321,12 +332,23 @@ function KannaSidebarImpl({
             </button>
             <Flower className="h-5 w-5 sm:h-6 sm:w-6 text-logo md:hidden" />
             <span className="font-logo text-base uppercase sm:text-md text-slate-600 dark:text-slate-100">{APP_NAME}</span>
-            
           </div>
-          <div className="flex items-center">
+          <div className="flex items-center justify-self-end md:justify-self-auto">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                navigate("/")
+                onClose()
+              }}
+              className="size-10 rounded-lg hover:!border-border/0 md:hidden"
+              title="New project"
+            >
+              <Plus className="h-5 w-5" />
+            </Button>
             {showDevBadge ? (
               <span
-                className="mr-1 inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-bold tracking-wider text-muted-foreground"
+                className="mr-1 hidden md:inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-bold tracking-wider text-muted-foreground"
                 title="Development build"
               >
                 DEV
@@ -335,7 +357,7 @@ function KannaSidebarImpl({
               <Button
                 variant="outline"
                 size="sm"
-                className="rounded-full !h-auto mr-1 py-0.5 px-2 bg-logo/20 hover:bg-logo text-logo border-logo/20 hover:text-foreground hover:border-logo/20  text-[11px] font-bold tracking-wider"
+                className="hidden md:inline-flex rounded-full !h-auto mr-1 py-0.5 px-2 bg-logo/20 hover:bg-logo text-logo border-logo/20 hover:text-foreground hover:border-logo/20 text-[11px] font-bold tracking-wider"
                 onClick={onOpenChangelog}
                 disabled={isUpdating}
                 title={updateSnapshot?.latestVersion ? `Update to ${updateSnapshot.latestVersion}` : "Update Kanna"}
@@ -351,18 +373,10 @@ function KannaSidebarImpl({
                 navigate("/")
                 onClose()
               }}
-              className="size-10 rounded-lg hover:!border-border/0"
+              className="hidden md:inline-flex size-10 rounded-lg hover:!border-border/0"
               title="New project"
             >
               <Plus className="size-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="md:hidden"
-              onClick={onClose}
-            >
-              <X className="h-5 w-5" />
             </Button>
           </div>
         </div>
