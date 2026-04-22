@@ -71,9 +71,9 @@ function ChatRowImpl({
           >
             {chat.title}
           </AnimatedShinyText>
-        ) : (
-          chat.title
-        )}
+        ) : 
+          chat.status !== 'idle' || activeChatId === normalizedChatId || chat.unread ? <span className="">{chat.title}</span> : <span className="text-slate-500 dark:text-slate-400">{chat.title}</span>
+        }
       </span>
       <div className={cn("relative h-7 mr-[2px] shrink-0", chat.canFork ? "w-12" : "w-6")}>
         {trailingLabel ? (

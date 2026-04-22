@@ -174,7 +174,7 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
         </span>
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="truncate max-w-[150px] whitespace-nowrap text-sm text-slate-500 dark:text-slate-400">
+            <span className="truncate max-w-[150px] whitespace-nowrap text-sm ">
               {getPathBasename(localPath)}
             </span>
           </TooltipTrigger>
