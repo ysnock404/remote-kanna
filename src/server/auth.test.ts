@@ -31,13 +31,14 @@ function extractCookie(response: Response) {
 }
 
 describe("password auth", () => {
-  test("redirects unauthenticated html requests to the login page", async () => {
+  test("serves the app shell to unauthenticated browser requests", async () => {
     const { server } = await startPasswordServer()
 
     try {
-      const response = await fetch(`http://localhost:${server.port}/`, { redirect: "manual", headers: { Accept: "text/html" } })
-      expect(response.status).toBe(302)
-      expect(response.headers.get("location")).toBe(`http://localhost:${server.port}/auth/login?next=%2F`)
+      const response = await fetch(`http://localhost:${server.port}/chat/demo`, { headers: { Accept: "text/html" } })
+      expect(response.status).toBe(200)
+      expect(response.headers.get("content-type")).toContain("text/html")
+      expect(await response.text()).toContain('id="root"')
     } finally {
       await server.stop()
     }
@@ -54,14 +55,13 @@ describe("password auth", () => {
     }
   })
 
-  test("serves the login page without authentication", async () => {
+  test("redirects /auth/login back into the app", async () => {
     const { server } = await startPasswordServer()
 
     try {
-      const response = await fetch(`http://localhost:${server.port}/auth/login`)
-      expect(response.status).toBe(200)
-      expect(response.headers.get("content-type")).toContain("text/html")
-      expect(await response.text()).toContain("This server is password protected")
+      const response = await fetch(`http://localhost:${server.port}/auth/login?next=%2Fchat%2Fdemo`, { redirect: "manual" })
+      expect(response.status).toBe(302)
+      expect(response.headers.get("location")).toBe(`http://localhost:${server.port}/chat/demo`)
     } finally {
       await server.stop()
     }
@@ -71,20 +71,16 @@ describe("password auth", () => {
     const { server } = await startPasswordServer()
 
     try {
-      const formData = new FormData()
-      formData.append("password", "secret")
-      formData.append("next", "/")
       const response = await fetch(`http://localhost:${server.port}/auth/login`, {
         method: "POST",
-        body: formData,
-        redirect: "manual",
+        body: JSON.stringify({ password: "secret", next: "/" }),
         headers: {
+          "Content-Type": "application/json",
           Origin: `http://localhost:${server.port}`,
         },
       })
 
-      expect(response.status).toBe(302)
-      expect(response.headers.get("location")).toBe(`http://localhost:${server.port}/`)
+      expect(response.status).toBe(200)
       expect(extractCookie(response)).toContain("kanna_session=")
     } finally {
       await server.stop()
@@ -95,19 +91,16 @@ describe("password auth", () => {
     const { server } = await startPasswordServer()
 
     try {
-      const formData = new FormData()
-      formData.append("password", "wrong")
       const response = await fetch(`http://localhost:${server.port}/auth/login`, {
         method: "POST",
-        body: formData,
-        redirect: "manual",
+        body: JSON.stringify({ password: "wrong", next: "/" }),
         headers: {
+          "Content-Type": "application/json",
           Origin: `http://localhost:${server.port}`,
         },
       })
 
-      expect(response.status).toBe(302)
-      expect(response.headers.get("location")).toContain("/auth/login?error=1")
+      expect(response.status).toBe(401)
       expect(response.headers.get("set-cookie")).toBeNull()
     } finally {
       await server.stop()
@@ -178,15 +171,14 @@ describe("password auth", () => {
     const { server } = await startPasswordServer({ port: 54321 })
 
     try {
-      const response = await fetch(`http://localhost:${server.port}/`, {
+      const response = await fetch(`http://localhost:${server.port}/auth/login?next=%2F`, {
         redirect: "manual",
         headers: {
-          Accept: "text/html",
           "X-Forwarded-Proto": "https",
         },
       })
       expect(response.status).toBe(302)
-      expect(response.headers.get("location")).toBe(`http://localhost:${server.port}/auth/login?next=%2F`)
+      expect(response.headers.get("location")).toBe(`http://localhost:${server.port}/`)
 
       const loginResponse = await fetch(`http://localhost:${server.port}/auth/login`, {
         method: "POST",
@@ -220,15 +212,14 @@ describe("password auth", () => {
     const { server } = await startPasswordServer({ port: 54322, trustProxy: true })
 
     try {
-      const redirect = await fetch(`http://localhost:${server.port}/`, {
+      const redirect = await fetch(`http://localhost:${server.port}/auth/login?next=%2F`, {
         redirect: "manual",
         headers: {
-          Accept: "text/html",
           "X-Forwarded-Proto": "https",
         },
       })
       expect(redirect.status).toBe(302)
-      expect(redirect.headers.get("location")).toBe(`https://localhost:${server.port}/auth/login?next=%2F`)
+      expect(redirect.headers.get("location")).toBe(`https://localhost:${server.port}/`)
 
       const loginResponse = await fetch(`http://localhost:${server.port}/auth/login`, {
         method: "POST",
@@ -260,15 +251,14 @@ describe("password auth", () => {
     const { server } = await startPasswordServer({ port: 54323, trustProxy: true })
 
     try {
-      const redirect = await fetch(`http://localhost:${server.port}/`, {
+      const redirect = await fetch(`http://localhost:${server.port}/auth/login?next=%2F`, {
         redirect: "manual",
         headers: {
-          Accept: "text/html",
           "X-Forwarded-Proto": "ftp",
         },
       })
       expect(redirect.status).toBe(302)
-      expect(redirect.headers.get("location")).toBe(`http://localhost:${server.port}/auth/login?next=%2F`)
+      expect(redirect.headers.get("location")).toBe(`http://localhost:${server.port}/`)
 
       const loginResponse = await fetch(`http://localhost:${server.port}/auth/login`, {
         method: "POST",

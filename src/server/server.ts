@@ -175,7 +175,7 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
           if (auth) {
             if (url.pathname === "/auth/login") {
               if (req.method === "GET") {
-                return auth.renderLoginPage(req)
+                return auth.redirectToApp(req)
               }
               if (req.method === "POST") {
                 return auth.handleLogin(req, "/")
@@ -190,8 +190,8 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
               if (!auth.isAuthenticated(req)) {
                 return new Response("Unauthorized", { status: 401 })
               }
-            } else if (!auth.isAuthenticated(req)) {
-              return auth.unauthorizedResponse(req)
+            } else if ((url.pathname === "/health" || url.pathname.startsWith("/api/")) && !auth.isAuthenticated(req)) {
+              return Response.json({ error: "Unauthorized" }, { status: 401 })
             }
           }
 
