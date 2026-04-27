@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { getAppAuthStateFromStatus, shouldRedirectToChangelog, shouldRetryAuthStatusRequest } from "./App"
+import { getAppAuthStateFromStatus, shouldPlayChatNotificationSound, shouldRedirectToChangelog, shouldRetryAuthStatusRequest } from "./App"
 import { getChatNotificationSnapshot, getChatSoundBurstCount, getNotificationTitleCount } from "./chatNotifications"
 import { isBrowserUnfocused, shouldPlayChatSound } from "../lib/chatSounds"
-import type { SidebarChatRow } from "../../shared/types"
+import type { AppSettingsSnapshot, SidebarChatRow } from "../../shared/types"
 
 function createProjectGroup(chats: SidebarChatRow[]) {
   return {
@@ -205,5 +205,13 @@ describe("chat sound helpers", () => {
     expect(shouldPlayChatSound("always", focusedDoc)).toBe(true)
     expect(shouldPlayChatSound("unfocused", hiddenDoc)).toBe(true)
     expect(shouldPlayChatSound("unfocused", focusedDoc)).toBe(false)
+  })
+
+  test("blocks notification sounds until app settings are hydrated", () => {
+    const hiddenDoc = { visibilityState: "hidden" as const, hasFocus: () => false }
+
+    expect(shouldPlayChatNotificationSound(null, "always", hiddenDoc)).toBe(false)
+    expect(shouldPlayChatNotificationSound({} as AppSettingsSnapshot, "never", hiddenDoc)).toBe(false)
+    expect(shouldPlayChatNotificationSound({} as AppSettingsSnapshot, "always", hiddenDoc)).toBe(true)
   })
 })

@@ -5,7 +5,6 @@ import { useOutletContext } from "react-router-dom"
 import type { ChatInputHandle } from "../../components/chat-ui/ChatInput"
 import { ChatNavbar } from "../../components/chat-ui/ChatNavbar"
 import { RightSidebar } from "../../components/chat-ui/RightSidebar"
-import { StandaloneShareDialog } from "../../components/chat-ui/StandaloneShareDialog"
 import { useAppDialog } from "../../components/ui/app-dialog"
 import { Card, CardContent } from "../../components/ui/card"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "../../components/ui/resizable"
@@ -44,19 +43,6 @@ export {
   hasFileDragTypes,
   shouldAutoFollowTranscriptResize,
 } from "./utils"
-
-function downloadTextFile(fileName: string, contents: string, contentType = "application/json") {
-  const blob = new Blob([contents], { type: `${contentType}; charset=utf-8` })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement("a")
-  anchor.href = url
-  anchor.download = fileName
-  anchor.style.display = "none"
-  document.body.append(anchor)
-  anchor.click()
-  anchor.remove()
-  URL.revokeObjectURL(url)
-}
 
 function useEmptyStateTyping(showEmptyState: boolean, activeChatId: string | null) {
   const [typedEmptyStateText, setTypedEmptyStateText] = useState("")
@@ -459,8 +445,6 @@ export function ChatPage() {
   const chatInputRef = useRef<ChatInputHandle | null>(null)
   const { inputRef, syncInputHeight, transcriptPaddingBottom } = useTranscriptPaddingBottom()
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
-  const [standaloneShareUrl, setStandaloneShareUrl] = useState<string | null>(null)
-  const [standaloneShareComplete, setStandaloneShareComplete] = useState(false)
   const showEmptyState = state.messages.length === 0 && state.runtime?.title === "New Chat"
   const projectId = state.activeProjectId
   const projectTerminalLayout = useTerminalLayoutStore((store) => (projectId ? store.projects[projectId] : undefined))
@@ -673,63 +657,6 @@ export function ChatPage() {
   const handleOpenExternal = useCallback<NonNullable<ComponentProps<typeof ChatNavbar>["onOpenExternal"]>>((action, editor) => {
     void state.handleOpenExternal(action, editor)
   }, [state.handleOpenExternal])
-
-  const handleShareTranscript = useCallback(async () => {
-    if (!state.activeChatId || state.isExportingStandalone) {
-      return
-    }
-    setStandaloneShareComplete(false)
-    const result = await state.handleExportStandalone()
-    if (result?.ok && result.shareUrl) {
-      setStandaloneShareUrl(result.shareUrl)
-      setStandaloneShareComplete(true)
-      return
-    }
-
-    if (result && !result.ok) {
-      const shouldDownload = await dialog.confirm({
-        title: "Share failed",
-        description: result.error,
-        confirmLabel: "Download transcript JSON",
-        cancelLabel: "Close",
-        confirmVariant: "secondary",
-      })
-
-      if (shouldDownload) {
-        downloadTextFile(result.transcriptFileName, result.transcriptJson)
-      }
-    }
-  }, [dialog, state.activeChatId, state.handleExportStandalone, state.isExportingStandalone])
-
-  const handleCopyStandaloneShareLink = useCallback(async () => {
-    if (!standaloneShareUrl) {
-      return false
-    }
-
-    try {
-      if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-        throw new Error("Clipboard is not available")
-      }
-      await navigator.clipboard.writeText(standaloneShareUrl)
-      return true
-    } catch (error) {
-      await dialog.alert({
-        title: "Copy failed",
-        description: error instanceof Error ? error.message : String(error),
-        closeLabel: "Close",
-      })
-      return false
-    }
-  }, [dialog, standaloneShareUrl])
-
-  const handleOpenStandaloneShareLink = useCallback(() => {
-    if (!standaloneShareUrl) {
-      return
-    }
-
-    window.open(standaloneShareUrl, "_blank", "noopener,noreferrer")
-    setStandaloneShareUrl(null)
-  }, [standaloneShareUrl])
 
   const handleRemoveTerminal = useCallback((currentProjectId: string, terminalId: string) => {
     void state.socket.command({ type: "terminal.close", terminalId }).catch(() => {})
@@ -949,10 +876,10 @@ export function ChatPage() {
           rightSidebarVisible={showRightSidebar}
           onToggleRightSidebar={projectId ? handleToggleRightSidebar : undefined}
           onOpenExternal={handleOpenExternal}
-          onExportTranscript={state.activeChatId ? handleShareTranscript : undefined}
+          onExportTranscript={state.activeChatId ? () => void state.handleShareChat(state.activeChatId) : undefined}
           canExportTranscript={Boolean(state.activeChatId) && !state.isExportingStandalone}
           isExportingTranscript={state.isExportingStandalone}
-          exportTranscriptComplete={standaloneShareComplete}
+          exportTranscriptComplete={state.standaloneShareComplete}
           editorPreset={editorPreset}
           editorCommandTemplate={editorCommandTemplate}
           platform={state.localProjects?.machine.platform}
@@ -997,19 +924,6 @@ export function ChatPage() {
           showEmptyState={showEmptyState}
         />
       </CardContent>
-
-      <StandaloneShareDialog
-        open={Boolean(standaloneShareUrl)}
-        shareUrl={standaloneShareUrl ?? ""}
-        onOpenChange={(open) => {
-          if (!open) {
-            setStandaloneShareUrl(null)
-            setStandaloneShareComplete(false)
-          }
-        }}
-        onOpenLink={handleOpenStandaloneShareLink}
-        onCopyLink={handleCopyStandaloneShareLink}
-      />
 
       <ChatInputDock
         inputRef={inputRef}

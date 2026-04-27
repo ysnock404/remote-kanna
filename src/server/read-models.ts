@@ -13,7 +13,6 @@ import { resolveLocalPath } from "./paths"
 import { SERVER_PROVIDERS } from "./provider-catalog"
 
 const SIDEBAR_RECENT_WINDOW_MS = 24 * 60 * 60 * 1_000
-const SIDEBAR_RECENT_PREVIEW_LIMIT = 5
 const SIDEBAR_FALLBACK_PREVIEW_LIMIT = 5
 
 export function deriveStatus(chat: ChatRecord, activeStatus?: KannaStatus): KannaStatus {
@@ -49,7 +48,7 @@ function isSidebarChatRecent(chat: Pick<SidebarChatRow, "lastMessageAt" | "_crea
 function getSidebarChatBuckets(chats: SidebarChatRow[], nowMs: number) {
   const recentChats = chats.filter((chat) => isSidebarChatRecent(chat, nowMs))
   const previewChats = recentChats.length > 0
-    ? recentChats.slice(0, SIDEBAR_RECENT_PREVIEW_LIMIT)
+    ? recentChats
     : chats.slice(0, Math.min(SIDEBAR_FALLBACK_PREVIEW_LIMIT, chats.length))
   const previewChatIds = new Set(previewChats.map((chat) => chat.chatId))
 

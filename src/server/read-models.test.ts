@@ -249,7 +249,7 @@ describe("read models", () => {
     expect(sidebar.projectGroups[0]?.defaultCollapsed).toBe(false)
   })
 
-  test("limits recent chat previews to five before folding into older chats", () => {
+  test("shows all recent chats in the preview before folding older chats", () => {
     const state = createEmptyState()
     state.projectsById.set("project-1", {
       id: "project-1",
@@ -285,8 +285,9 @@ describe("read models", () => {
       "chat-3",
       "chat-4",
       "chat-5",
+      "chat-6",
     ])
-    expect(sidebar.projectGroups[0]?.olderChats.map((chat) => chat.chatId)).toEqual(["chat-6"])
+    expect(sidebar.projectGroups[0]?.olderChats.map((chat) => chat.chatId)).toEqual([])
   })
 
   test("disables forking for active and draining chats, but allows pending fork chats", () => {

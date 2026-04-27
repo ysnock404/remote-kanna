@@ -7,6 +7,7 @@ import { Kbd } from "../../ui/kbd"
 import { formatSidebarAgeLabel } from "../../../lib/formatters"
 import { getSidebarChatTimestamp } from "../../../lib/sidebarChats"
 import { cn, normalizeChatId } from "../../../lib/utils"
+import { ChatRowMenu } from "./Menus"
 
 const loadingStatuses = new Set(["starting", "running"])
 
@@ -17,6 +18,9 @@ interface Props {
   shortcutHint?: string | null
   showShortcutHint?: boolean
   onSelectChat: (chatId: string) => void
+  onRenameChat: (chatId: string) => void
+  onShareChat: (chatId: string) => void
+  onOpenInFinder: (localPath: string) => void
   onForkChat: (chatId: string) => void
   onDeleteChat: (chatId: string) => void
 }
@@ -28,6 +32,9 @@ function ChatRowImpl({
   shortcutHint = null,
   showShortcutHint = false,
   onSelectChat,
+  onRenameChat,
+  onShareChat,
+  onOpenInFinder,
   onForkChat,
   onDeleteChat,
 }: Props) {
@@ -36,7 +43,7 @@ function ChatRowImpl({
   const showShortcutKeycap = showShortcutHint && Boolean(shortcutHint)
   const normalizedChatId = normalizeChatId(chat.chatId)
 
-  return (
+  const row = (
     <div
       key={chat._id}
       data-chat-id={normalizedChatId}
@@ -126,6 +133,19 @@ function ChatRowImpl({
         </div>
       </div>
     </div>
+  )
+
+  return (
+    <ChatRowMenu
+      canFork={chat.canFork}
+      onRename={() => onRenameChat(chat.chatId)}
+      onShare={() => onShareChat(chat.chatId)}
+      onOpenInFinder={() => onOpenInFinder(chat.localPath)}
+      onFork={() => onForkChat(chat.chatId)}
+      onDelete={() => onDeleteChat(chat.chatId)}
+    >
+      {row}
+    </ChatRowMenu>
   )
 }
 

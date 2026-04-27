@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { Code, Copy, FolderOpen, Trash2 } from "lucide-react"
+import { Code, Copy, FolderOpen, Pencil, Split, Trash2, UserRoundPlus } from "lucide-react"
 import {
   ContextMenu,
   ContextMenuContent,
@@ -64,6 +64,82 @@ export function ProjectSectionMenu({
         >
           <Trash2 className="h-3.5 w-3.5" />
           <span className="text-xs font-medium">Remove</span>
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  )
+}
+
+export function ChatRowMenu({
+  canFork,
+  onRename,
+  onShare,
+  onOpenInFinder,
+  onFork,
+  onDelete,
+  children,
+}: {
+  canFork?: boolean
+  onRename: () => void
+  onShare: () => void
+  onOpenInFinder: () => void
+  onFork: () => void
+  onDelete: () => void
+  children: ReactNode
+}) {
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        {children}
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.preventDefault()
+            onRename()
+          }}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">Rename</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.preventDefault()
+            onShare()
+          }}
+        >
+          <UserRoundPlus className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">Share</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.preventDefault()
+            onOpenInFinder()
+          }}
+        >
+          <FolderOpen className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">Open in Finder</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          disabled={!canFork}
+          onSelect={(event) => {
+            event.preventDefault()
+            if (!canFork) return
+            onFork()
+          }}
+        >
+          <Split className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">Fork</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.preventDefault()
+            onDelete()
+          }}
+          className="text-destructive dark:text-red-400 hover:bg-destructive/10 focus:bg-destructive/10 dark:hover:bg-red-500/20 dark:focus:bg-red-500/20"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">Delete</span>
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
