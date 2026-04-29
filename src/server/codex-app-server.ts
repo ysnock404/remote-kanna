@@ -11,6 +11,7 @@ import type {
   TranscriptEntry,
 } from "../shared/types"
 import type { HarnessEvent, HarnessToolRequest, HarnessTurn } from "./harness-types"
+import { getRemoteCodexAppServerCommand, type ProjectRuntime } from "./remote-hosts"
 import {
   type CollabAgentToolCallItem,
   type ContextCompactedNotification,
@@ -65,7 +66,7 @@ interface CodexAppServerProcess {
   once(event: "error", listener: (error: Error) => void): this
 }
 
-type SpawnCodexAppServer = (cwd: string) => CodexAppServerProcess
+type SpawnCodexAppServer = (cwd: string, runtime: ProjectRuntime) => CodexAppServerProcess
 
 interface PendingRequest<TResult> {
   method: string
@@ -106,6 +107,7 @@ interface PendingTurn {
 interface SessionContext {
   chatId: string
   cwd: string
+  runtimeKey: string
   child: CodexAppServerProcess
   pendingRequests: Map<CodexRequestId, PendingRequest<unknown>>
   pendingTurn: PendingTurn | null
@@ -117,6 +119,7 @@ interface SessionContext {
 export interface StartCodexSessionArgs {
   chatId: string
   cwd: string
+  runtime?: ProjectRuntime
   model: string
   serviceTier?: ServiceTier
   sessionToken: string | null
@@ -140,6 +143,10 @@ export interface GenerateStructuredArgs {
   model?: string
   effort?: CodexReasoningEffort
   serviceTier?: ServiceTier
+}
+
+function getRuntimeKey(runtime: ProjectRuntime) {
+  return runtime.kind === "local" ? "local" : `ssh:${runtime.host.id}:${runtime.host.sshTarget}`
 }
 
 function timestamped<T extends Omit<TranscriptEntry, "_id" | "createdAt">>(
@@ -738,17 +745,34 @@ export class CodexAppServerManager {
   private readonly spawnProcess: SpawnCodexAppServer
 
   constructor(args: { spawnProcess?: SpawnCodexAppServer } = {}) {
-    this.spawnProcess = args.spawnProcess ?? ((cwd) =>
-      spawn("codex", ["app-server"], {
+    this.spawnProcess = args.spawnProcess ?? ((cwd, runtime) => {
+      if (runtime.kind === "ssh") {
+        return spawn("ssh", [
+          "-o",
+          "BatchMode=yes",
+          "-o",
+          "ConnectTimeout=5",
+          runtime.host.sshTarget,
+          getRemoteCodexAppServerCommand(cwd),
+        ], {
+          stdio: ["pipe", "pipe", "pipe"],
+          env: process.env,
+        }) as unknown as CodexAppServerProcess
+      }
+
+      return spawn("codex", ["app-server"], {
         cwd,
         stdio: ["pipe", "pipe", "pipe"],
         env: process.env,
-      }) as unknown as CodexAppServerProcess)
+      }) as unknown as CodexAppServerProcess
+    })
   }
 
   async startSession(args: StartCodexSessionArgs) {
+    const runtime = args.runtime ?? { kind: "local" as const }
+    const runtimeKey = getRuntimeKey(runtime)
     const existing = this.sessions.get(args.chatId)
-    if (existing && !existing.closed && existing.cwd === args.cwd && !args.pendingForkSessionToken) {
+    if (existing && !existing.closed && existing.cwd === args.cwd && existing.runtimeKey === runtimeKey && !args.pendingForkSessionToken) {
       return
     }
 
@@ -756,10 +780,11 @@ export class CodexAppServerManager {
       this.stopSession(args.chatId)
     }
 
-    const child = this.spawnProcess(args.cwd)
+    const child = this.spawnProcess(args.cwd, runtime)
     const context: SessionContext = {
       chatId: args.chatId,
       cwd: args.cwd,
+      runtimeKey,
       child,
       pendingRequests: new Map(),
       pendingTurn: null,

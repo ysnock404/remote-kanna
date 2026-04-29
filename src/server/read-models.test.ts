@@ -169,6 +169,8 @@ describe("read models", () => {
 
     expect(snapshot.projects).toEqual([
       {
+        machineId: "local",
+        machineLabel: "Local Machine",
         localPath: "/tmp/project",
         title: "Saved Project",
         source: "saved",

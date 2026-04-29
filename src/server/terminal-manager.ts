@@ -4,6 +4,7 @@ import defaultShell, { detectDefaultShell } from "default-shell"
 import { Terminal } from "@xterm/headless"
 import { SerializeAddon } from "@xterm/addon-serialize"
 import type { TerminalEvent, TerminalSnapshot } from "../shared/protocol"
+import { getRemoteShellCommand, type ProjectRuntime } from "./remote-hosts"
 
 const DEFAULT_COLS = 80
 const DEFAULT_ROWS = 24
@@ -16,6 +17,7 @@ const MODE_SEQUENCE_TAIL_LENGTH = 16
 
 interface CreateTerminalArgs {
   projectPath: string
+  runtime?: ProjectRuntime
   terminalId: string
   cols: number
   rows: number
@@ -166,6 +168,7 @@ export class TerminalManager {
       throw new Error("Embedded terminal requires Bun 1.3.5+ with Bun.Terminal support.")
     }
 
+    const runtime = args.runtime ?? { kind: "local" as const }
     const existing = this.sessions.get(args.terminalId)
     if (existing) {
       existing.scrollback = clampScrollback(args.scrollback)
@@ -178,7 +181,7 @@ export class TerminalManager {
       return this.snapshotOf(existing)
     }
 
-    const shell = resolveShell()
+    const shell = runtime.kind === "ssh" ? "ssh" : resolveShell()
     const cols = normalizeTerminalDimension(args.cols, DEFAULT_COLS)
     const rows = normalizeTerminalDimension(args.rows, DEFAULT_ROWS)
     const scrollback = clampScrollback(args.scrollback)
@@ -220,8 +223,20 @@ export class TerminalManager {
     }
 
     try {
-      session.process = Bun.spawn([shell, ...resolveShellArgs(shell)], {
-        cwd: args.projectPath,
+      const command = runtime.kind === "ssh"
+        ? [
+            "ssh",
+            "-tt",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=5",
+            runtime.host.sshTarget,
+            getRemoteShellCommand(args.projectPath),
+          ]
+        : [shell, ...resolveShellArgs(shell)]
+      session.process = Bun.spawn(command, {
+        cwd: runtime.kind === "local" ? args.projectPath : undefined,
         env: createTerminalEnv(),
         terminal: session.terminal,
       })

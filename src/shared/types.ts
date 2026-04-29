@@ -8,6 +8,7 @@ export type ChatSoundPreference = "never" | "unfocused" | "always"
 export type ChatSoundId = "blow" | "bottle" | "frog" | "funk" | "glass" | "ping" | "pop" | "purr" | "tink"
 export type DefaultProviderPreference = "last_used" | AgentProvider
 export type EditorPreset = "cursor" | "vscode" | "xcode" | "windsurf" | "custom"
+export type MachineId = "local" | `remote:${string}`
 export const DEFAULT_OPENAI_SDK_MODEL = "gpt-5.4-mini"
 export const DEFAULT_OPENROUTER_SDK_MODEL = "moonshotai/kimi-k2.5:nitro"
 
@@ -318,6 +319,7 @@ export type KannaStatus =
 
 export interface ProjectSummary {
   id: string
+  machineId?: MachineId
   localPath: string
   title: string
   createdAt: number
@@ -331,6 +333,8 @@ export interface SidebarChatRow {
   title: string
   status: KannaStatus
   unread: boolean
+  machineId?: MachineId
+  machineLabel?: string
   localPath: string
   provider: AgentProvider | null
   lastMessageAt?: number
@@ -340,6 +344,8 @@ export interface SidebarChatRow {
 
 export interface SidebarProjectGroup {
   groupKey: string
+  machineId?: MachineId
+  machineLabel?: string
   localPath: string
   chats: SidebarChatRow[]
   previewChats: SidebarChatRow[]
@@ -352,7 +358,27 @@ export interface SidebarData {
   projectGroups: SidebarProjectGroup[]
 }
 
+export interface RemoteHostConfig {
+  id: string
+  label: string
+  sshTarget: string
+  enabled: boolean
+  projectRoots: string[]
+  codexEnabled: boolean
+  claudeEnabled: boolean
+}
+
+export interface MachineSummary {
+  id: MachineId
+  displayName: string
+  platform?: NodeJS.Platform | "remote"
+  sshTarget?: string
+  enabled?: boolean
+}
+
 export interface LocalProjectSummary {
+  machineId?: MachineId
+  machineLabel?: string
   localPath: string
   title: string
   source: "saved" | "discovered"
@@ -366,6 +392,7 @@ export interface LocalProjectsSnapshot {
     displayName: string
     platform: NodeJS.Platform
   }
+  machines?: MachineSummary[]
   projects: LocalProjectSummary[]
 }
 
@@ -383,6 +410,7 @@ export interface AppSettingsSnapshot {
     preset: EditorPreset
     commandTemplate: string
   }
+  remoteHosts?: RemoteHostConfig[]
   defaultProvider: DefaultProviderPreference
   providerDefaults: ChatProviderPreferences
   warning: string | null
@@ -397,6 +425,7 @@ export interface AppSettingsPatch {
   chatSoundId?: ChatSoundId
   terminal?: Partial<AppSettingsSnapshot["terminal"]>
   editor?: Partial<AppSettingsSnapshot["editor"]>
+  remoteHosts?: RemoteHostConfig[]
   defaultProvider?: DefaultProviderPreference
   providerDefaults?: {
     claude?: Partial<ProviderPreference<ClaudeModelOptions>>
@@ -986,6 +1015,8 @@ export type HydratedTranscriptMessage =
 export interface ChatRuntime {
   chatId: string
   projectId: string
+  machineId?: MachineId
+  machineLabel?: string
   localPath: string
   title: string
   status: KannaStatus

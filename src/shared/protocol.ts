@@ -10,6 +10,7 @@ import type {
   KeybindingsSnapshot,
   LlmProviderSnapshot,
   LocalProjectsSnapshot,
+  MachineId,
   ModelOptions,
   SidebarData,
   StandaloneTranscriptAttachmentMode,
@@ -54,8 +55,8 @@ export type TerminalEvent =
   | { type: "terminal.exit"; terminalId: string; exitCode: number; signal?: number }
 
 export type ClientCommand =
-  | { type: "project.open"; localPath: string }
-  | { type: "project.create"; localPath: string; title: string }
+  | { type: "project.open"; localPath: string; machineId?: MachineId }
+  | { type: "project.create"; localPath: string; title: string; machineId?: MachineId }
   | { type: "project.remove"; projectId: string }
   | { type: "sidebar.reorderProjectGroups"; projectIds: string[] }
   | { type: "project.readDiffPatch"; projectId: string; path: string }

@@ -12,6 +12,8 @@ import { EventStore } from "./event-store"
 import { openExternal } from "./external-open"
 import { KeybindingsManager } from "./keybindings"
 import { ensureProjectDirectory, resolveLocalPath } from "./paths"
+import { getProjectLocationKey, LOCAL_MACHINE_ID, normalizeMachineId } from "../shared/project-location"
+import { ensureRemoteProjectDirectory, resolveProjectRuntime, verifyRemoteProjectDirectory } from "./remote-hosts"
 import { writeStandaloneTranscriptExport } from "./standalone-export"
 import { TerminalManager } from "./terminal-manager"
 import type { UpdateManager } from "./update-manager"
@@ -246,6 +248,7 @@ export function createWsRouter({
       preset: "cursor",
       commandTemplate: "cursor {path}",
     },
+    remoteHosts: [],
     defaultProvider: "last_used",
     providerDefaults: {
       claude: {
@@ -279,6 +282,7 @@ export function createWsRouter({
       ...snapshot.editor,
       ...patch.editor,
     },
+    remoteHosts: patch.remoteHosts ?? snapshot.remoteHosts ?? [],
     providerDefaults: {
       claude: {
         ...snapshot.providerDefaults.claude,
@@ -406,9 +410,12 @@ export function createWsRouter({
     }
 
     const startedAt = performance.now()
+    const settings = resolvedAppSettings.getSnapshot()
     const data = deriveSidebarData(store.state, agent.getActiveStatuses(), {
       sidebarProjectOrder: getSidebarProjectOrder(store),
       drainingChatIds: agent.getDrainingChatIds(),
+      remoteHosts: settings.remoteHosts ?? [],
+      localMachineName: machineDisplayName,
     })
     if (isSendToStartingProfilingEnabled()) {
       const totalChats = data.projectGroups.reduce((count, group) => count + group.chats.length, 0)
@@ -453,7 +460,7 @@ export function createWsRouter({
 
     if (topic.type === "local-projects") {
       const discoveredProjects = getDiscoveredProjects()
-      const data = deriveLocalProjectsSnapshot(store.state, discoveredProjects, machineDisplayName)
+      const data = deriveLocalProjectsSnapshot(store.state, discoveredProjects, machineDisplayName, resolvedAppSettings.getSnapshot().remoteHosts ?? [])
 
       return {
         v: PROTOCOL_VERSION,
@@ -524,14 +531,17 @@ export function createWsRouter({
     }
 
     if (topic.type === "project-git") {
+      const project = store.getProject(topic.projectId)
       return {
         v: PROTOCOL_VERSION,
         type: "snapshot",
         id,
         snapshot: {
           type: "project-git",
-          data: store.getProject(topic.projectId)
-            ? resolvedDiffStore.getProjectSnapshot(topic.projectId)
+          data: project
+            ? normalizeMachineId(project.machineId) === LOCAL_MACHINE_ID
+              ? resolvedDiffStore.getProjectSnapshot(topic.projectId)
+              : { status: "unknown", branchName: undefined, defaultBranchName: undefined, hasOriginRemote: undefined, originRepoSlug: undefined, hasUpstream: undefined, aheadCount: undefined, behindCount: undefined, lastFetchedAt: undefined, files: [], branchHistory: { entries: [] } }
             : null,
         },
       }
@@ -548,7 +558,11 @@ export function createWsRouter({
           agent.getActiveStatuses(),
           agent.getDrainingChatIds(),
           topic.chatId,
-          (chatId) => store.getRecentChatHistory(chatId, topic.recentLimit ?? DEFAULT_CHAT_RECENT_LIMIT)
+          (chatId) => store.getRecentChatHistory(chatId, topic.recentLimit ?? DEFAULT_CHAT_RECENT_LIMIT),
+          {
+            remoteHosts: resolvedAppSettings.getSnapshot().remoteHosts ?? [],
+            localMachineName: machineDisplayName,
+          }
         ),
       },
     }
@@ -815,6 +829,14 @@ export function createWsRouter({
     return { chat, project }
   }
 
+  function resolveSshHost(machineId: ReturnType<typeof normalizeMachineId>) {
+    const runtime = resolveProjectRuntime(machineId, resolvedAppSettings.getSnapshot().remoteHosts ?? [])
+    if (runtime.kind !== "ssh") {
+      throw new Error("Expected a remote host")
+    }
+    return runtime.host
+  }
+
   async function handleCommand(ws: ServerWebSocket<ClientState>, message: Extract<ClientEnvelope, { type: "command" }>) {
     const { command, id } = message
     try {
@@ -914,10 +936,15 @@ export function createWsRouter({
           return
         }
         case "project.open": {
-          await ensureProjectDirectory(command.localPath)
-          const normalizedPath = resolveLocalPath(command.localPath)
-          const existingProjectId = store.state.projectIdsByPath.get(normalizedPath)
-          const project = await store.openProject(command.localPath)
+          const machineId = normalizeMachineId(command.machineId)
+          const normalizedPath = machineId === LOCAL_MACHINE_ID
+            ? resolveLocalPath(command.localPath)
+            : await verifyRemoteProjectDirectory(resolveSshHost(machineId), command.localPath)
+          if (machineId === LOCAL_MACHINE_ID) {
+            await ensureProjectDirectory(command.localPath)
+          }
+          const existingProjectId = store.state.projectIdsByPath.get(getProjectLocationKey(machineId, normalizedPath))
+          const project = await store.openProject(normalizedPath, undefined, machineId)
           await refreshDiscovery()
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result: { projectId: project.id } })
           if (!existingProjectId) {
@@ -926,10 +953,15 @@ export function createWsRouter({
           break
         }
         case "project.create": {
-          await ensureProjectDirectory(command.localPath)
-          const normalizedPath = resolveLocalPath(command.localPath)
-          const existingProjectId = store.state.projectIdsByPath.get(normalizedPath)
-          const project = await store.openProject(command.localPath, command.title)
+          const machineId = normalizeMachineId(command.machineId)
+          const normalizedPath = machineId === LOCAL_MACHINE_ID
+            ? resolveLocalPath(command.localPath)
+            : await ensureRemoteProjectDirectory(resolveSshHost(machineId), command.localPath)
+          if (machineId === LOCAL_MACHINE_ID) {
+            await ensureProjectDirectory(command.localPath)
+          }
+          const existingProjectId = store.state.projectIdsByPath.get(getProjectLocationKey(machineId, normalizedPath))
+          const project = await store.openProject(normalizedPath, command.title, machineId)
           await refreshDiscovery()
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result: { projectId: project.id } })
           if (!existingProjectId) {
@@ -1266,8 +1298,10 @@ export function createWsRouter({
           if (!project) {
             throw new Error("Project not found")
           }
+          const runtime = resolveProjectRuntime(normalizeMachineId(project.machineId), resolvedAppSettings.getSnapshot().remoteHosts ?? [])
           const snapshot = terminals.createTerminal({
             projectPath: project.localPath,
+            runtime,
             terminalId: command.terminalId,
             cols: command.cols,
             rows: command.rows,

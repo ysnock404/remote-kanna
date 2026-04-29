@@ -2,10 +2,10 @@
   <img src="assets/icon.png" alt="Kanna" width="80" />
 </p>
 
-<h1 align="center">Kanna</h1>
+<h1 align="center">Remote Kanna</h1>
 
 <p align="center">
-  <strong>A beautiful web UI for the Claude Code & Codex CLIs</strong>
+  <strong>A remote-first fork of Kanna for running Codex and terminal sessions across multiple machines</strong>
 </p>
 
 <p align="center">
@@ -23,6 +23,26 @@
 </p>
 
 <br />
+
+## Fork status
+
+Remote Kanna is a public fork of [jakemor/kanna](https://github.com/jakemor/kanna). The goal is to keep Kanna's local web UI, project chat, terminal, and provider features, while adding a central remote workflow for machines reached over SSH, including direct Tailscale IPs.
+
+Upstream base:
+
+- Repository: `https://github.com/jakemor/kanna`
+- Base commit: `17ccafca8af2436067b08630bacfcf915ec83a8b`
+
+Remote focus:
+
+- Index projects from configured SSH machines, including Tailscale IP targets
+- Open remote terminal sessions from the central Kanna UI
+- Run remote Codex through `codex app-server` on the selected machine
+- Keep local Kanna behavior working as the default path
+
+Public repo note: keep real hostnames, usernames, tokens, API keys, and private project paths out of committed files. Use local settings for machine-specific configuration.
+
+Remote host setup lives in [docs/remote-hosts.md](docs/remote-hosts.md).
 
 ## Quickstart
 

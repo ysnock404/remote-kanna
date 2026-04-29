@@ -33,6 +33,7 @@ function expectedSettingsSnapshot(filePath: string, overrides: Partial<AppSettin
       preset: "cursor",
       commandTemplate: "cursor {path}",
     },
+    remoteHosts: [],
     defaultProvider: "last_used",
     providerDefaults: {
       claude: {
@@ -73,6 +74,34 @@ describe("readAppSettingsSnapshot", () => {
     const snapshot = await readAppSettingsSnapshot(filePath)
     expect(snapshot.analyticsEnabled).toBe(true)
     expect(snapshot.warning).toContain("invalid JSON")
+  })
+
+  test("normalizes remote host settings", async () => {
+    const filePath = await createTempFilePath()
+    await writeFile(filePath, JSON.stringify({
+      remoteHosts: [
+        {
+          id: "Lab Box",
+          label: "Lab Box",
+          sshTarget: "dev@100.64.0.10",
+          projectRoots: ["~/Projects", "", 3],
+        },
+      ],
+    }), "utf8")
+
+    const snapshot = await readAppSettingsSnapshot(filePath)
+
+    expect(snapshot.remoteHosts).toEqual([
+      {
+        id: "lab-box",
+        label: "Lab Box",
+        sshTarget: "dev@100.64.0.10",
+        enabled: true,
+        projectRoots: ["~/Projects"],
+        codexEnabled: true,
+        claudeEnabled: false,
+      },
+    ])
   })
 })
 

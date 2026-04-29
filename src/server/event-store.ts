@@ -3,7 +3,8 @@ import { existsSync, readFileSync as readFileSyncImmediate } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
 import { getDataDir, LOG_PREFIX } from "../shared/branding"
-import type { AgentProvider, ChatHistoryPage, ChatHistorySnapshot, QueuedChatMessage, TranscriptEntry } from "../shared/types"
+import type { AgentProvider, ChatHistoryPage, ChatHistorySnapshot, MachineId, QueuedChatMessage, TranscriptEntry } from "../shared/types"
+import { getProjectLocationKey, LOCAL_MACHINE_ID, normalizeMachineId } from "../shared/project-location"
 import { STORE_VERSION } from "../shared/types"
 import {
   type ChatEvent,
@@ -21,6 +22,17 @@ import { resolveLocalPath } from "./paths"
 const COMPACTION_THRESHOLD_BYTES = 2 * 1024 * 1024
 const STALE_EMPTY_CHAT_MAX_AGE_MS = 30 * 60 * 1000
 const SIDEBAR_PROJECT_ORDER_FILE = "sidebar-order.json"
+
+function normalizeProjectPath(machineId: MachineId, localPath: string) {
+  if (machineId === LOCAL_MACHINE_ID) {
+    return resolveLocalPath(localPath)
+  }
+  const trimmed = localPath.trim()
+  if (!trimmed) {
+    throw new Error("Project path is required")
+  }
+  return trimmed
+}
 
 function normalizeSidebarProjectOrder(value: unknown) {
   if (!Array.isArray(value)) {
@@ -223,8 +235,10 @@ export class EventStore {
         return
       }
       for (const project of parsed.projects) {
-        this.state.projectsById.set(project.id, { ...project })
-        this.state.projectIdsByPath.set(project.localPath, project.id)
+        const machineId = normalizeMachineId(project.machineId)
+        const localPath = normalizeProjectPath(machineId, project.localPath)
+        this.state.projectsById.set(project.id, { ...project, machineId, localPath })
+        this.state.projectIdsByPath.set(getProjectLocationKey(machineId, localPath), project.id)
       }
       for (const chat of parsed.chats) {
         this.state.chatsById.set(chat.id, {
@@ -423,16 +437,18 @@ export class EventStore {
   private applyEvent(event: StoreEvent) {
     switch (event.type) {
       case "project_opened": {
-        const localPath = resolveLocalPath(event.localPath)
+        const machineId = normalizeMachineId(event.machineId)
+        const localPath = normalizeProjectPath(machineId, event.localPath)
         const project = {
           id: event.projectId,
+          machineId,
           localPath,
           title: event.title,
           createdAt: event.timestamp,
           updatedAt: event.timestamp,
         }
         this.state.projectsById.set(project.id, project)
-        this.state.projectIdsByPath.set(localPath, project.id)
+        this.state.projectIdsByPath.set(getProjectLocationKey(machineId, localPath), project.id)
         break
       }
       case "project_removed": {
@@ -440,7 +456,7 @@ export class EventStore {
         if (!project) break
         project.deletedAt = event.timestamp
         project.updatedAt = event.timestamp
-        this.state.projectIdsByPath.delete(project.localPath)
+        this.state.projectIdsByPath.delete(getProjectLocationKey(normalizeMachineId(project.machineId), project.localPath))
         break
       }
       case "chat_created": {
@@ -632,9 +648,11 @@ export class EventStore {
     return entries
   }
 
-  async openProject(localPath: string, title?: string) {
-    const normalized = resolveLocalPath(localPath)
-    const existingId = this.state.projectIdsByPath.get(normalized)
+  async openProject(localPath: string, title?: string, machineId: MachineId = LOCAL_MACHINE_ID) {
+    const normalizedMachineId = normalizeMachineId(machineId)
+    const normalized = normalizeProjectPath(normalizedMachineId, localPath)
+    const locationKey = getProjectLocationKey(normalizedMachineId, normalized)
+    const existingId = this.state.projectIdsByPath.get(locationKey)
     if (existingId) {
       const existing = this.state.projectsById.get(existingId)
       if (existing && !existing.deletedAt) {
@@ -643,13 +661,14 @@ export class EventStore {
     }
 
     const hiddenProject = [...this.state.projectsById.values()]
-      .find((project) => project.localPath === normalized && project.deletedAt)
+      .find((project) => project.machineId === normalizedMachineId && project.localPath === normalized && project.deletedAt)
     const projectId = hiddenProject?.id ?? crypto.randomUUID()
     const event: ProjectEvent = {
       v: STORE_VERSION,
       type: "project_opened",
       timestamp: Date.now(),
       projectId,
+      machineId: normalizedMachineId,
       localPath: normalized,
       title: title?.trim() || path.basename(normalized) || normalized,
     }

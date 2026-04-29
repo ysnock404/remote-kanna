@@ -13,6 +13,7 @@ import type {
 import { normalizeToolCall } from "../shared/tools"
 import type { ClientCommand } from "../shared/protocol"
 import { EventStore } from "./event-store"
+import type { ProjectRecord } from "./events"
 import type { AnalyticsReporter } from "./analytics"
 import { NoopAnalyticsReporter } from "./analytics"
 import { CodexAppServerManager } from "./codex-app-server"
@@ -27,6 +28,7 @@ import {
 } from "./provider-catalog"
 import { resolveClaudeApiModelId } from "../shared/types"
 import { fallbackTitleFromMessage } from "./generate-title"
+import type { ProjectRuntime } from "./remote-hosts"
 
 const CLAUDE_TOOLSET = [
   "Skill",
@@ -103,6 +105,7 @@ interface AgentCoordinatorArgs {
   analytics?: AnalyticsReporter
   codexManager?: CodexAppServerManager
   generateTitle?: (messageContent: string, cwd: string) => Promise<GenerateChatTitleResult>
+  resolveProjectRuntime?: (project: ProjectRecord) => ProjectRuntime
   startClaudeSession?: (args: {
     localPath: string
     model: string
@@ -675,6 +678,7 @@ export class AgentCoordinator {
   private readonly analytics: AnalyticsReporter
   private readonly codexManager: CodexAppServerManager
   private readonly generateTitle: (messageContent: string, cwd: string) => Promise<GenerateChatTitleResult>
+  private readonly resolveProjectRuntime: (project: ProjectRecord) => ProjectRuntime
   private readonly startClaudeSessionFn: NonNullable<AgentCoordinatorArgs["startClaudeSession"]>
   private reportBackgroundError: ((message: string) => void) | null = null
   readonly activeTurns = new Map<string, ActiveTurn>()
@@ -687,6 +691,7 @@ export class AgentCoordinator {
     this.analytics = args.analytics ?? NoopAnalyticsReporter
     this.codexManager = args.codexManager ?? new CodexAppServerManager()
     this.generateTitle = args.generateTitle ?? generateTitleForChatDetailed
+    this.resolveProjectRuntime = args.resolveProjectRuntime ?? (() => ({ kind: "local" }))
     this.startClaudeSessionFn = args.startClaudeSession ?? startClaudeSession
   }
 
@@ -876,6 +881,7 @@ export class AgentCoordinator {
     if (!project) {
       throw new Error("Project not found")
     }
+    const projectRuntime = this.resolveProjectRuntime(project)
 
     if (args.appendUserPrompt) {
       const userPromptEntry = timestamped(
@@ -917,6 +923,9 @@ export class AgentCoordinator {
 
     let turn: HarnessTurn
     if (args.provider === "claude") {
+      if (projectRuntime.kind !== "local") {
+        throw new Error("Remote Claude runtime is not implemented yet. Use Codex on SSH hosts for now, or run Kanna directly on the remote machine.")
+      }
       logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
         chatId: args.chatId,
         provider: args.provider,
@@ -938,6 +947,9 @@ export class AgentCoordinator {
         model: args.model,
       })
     } else {
+      if (projectRuntime.kind === "ssh" && !projectRuntime.host.codexEnabled) {
+        throw new Error(`Codex is disabled for remote host ${projectRuntime.host.label}`)
+      }
       logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
         chatId: args.chatId,
         provider: args.provider,
@@ -946,6 +958,7 @@ export class AgentCoordinator {
       const sessionToken = await this.codexManager.startSession({
         chatId: args.chatId,
         cwd: project.localPath,
+        runtime: projectRuntime,
         model: args.model,
         serviceTier: args.serviceTier,
         sessionToken: chat.sessionToken,

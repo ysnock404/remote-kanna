@@ -43,6 +43,7 @@ describe("project discovery", () => {
     expect(projects).toEqual([
       {
         provider: "claude",
+        machineId: "local",
         localPath: projectDir,
         title: "alpha-project",
         modifiedAt: new Date("2026-03-16T10:00:00.000Z").getTime(),
@@ -111,6 +112,7 @@ describe("project discovery", () => {
     expect(projects).toEqual([
       {
         provider: "codex",
+        machineId: "local",
         localPath: liveProjectDir,
         title: "kanna",
         modifiedAt: Date.parse("2026-03-16T23:05:58.940134Z"),
@@ -197,11 +199,13 @@ describe("project discovery", () => {
 
     expect(discoverProjects("/unused-home", adapters)).toEqual([
       {
+        machineId: "local",
         localPath: "/tmp/project",
         title: "Codex Project",
         modifiedAt: 20,
       },
       {
+        machineId: "local",
         localPath: "/tmp/other-project",
         title: "Other Project",
         modifiedAt: 15,

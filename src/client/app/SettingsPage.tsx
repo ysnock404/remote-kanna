@@ -474,6 +474,7 @@ export function SettingsPage() {
   const setChatSoundId = useChatSoundPreferencesStore((store) => store.setChatSoundId)
   const keybindings = state.keybindings
   const appSettings = state.appSettings
+  const remoteHosts = appSettings?.remoteHosts ?? []
   const llmProvider = state.llmProvider
   const defaultProvider = useChatPreferencesStore((store) => store.defaultProvider)
   const providerDefaults = useChatPreferencesStore((store) => store.providerDefaults)
@@ -1164,6 +1165,39 @@ export function SettingsPage() {
                           </div>
                         </div>
                       ) : null}
+
+                      <SettingsRow
+                        title="Remote Machines"
+                        description={remoteHosts.length > 0
+                          ? `${remoteHosts.length} SSH host${remoteHosts.length === 1 ? "" : "s"} configured for remote projects.`
+                          : `Add SSH hosts in ${appSettings?.filePathDisplay ?? "~/.kanna/data/settings.json"}.`}
+                        alignStart
+                      >
+                        <div className="flex min-w-0 max-w-[420px] flex-col items-stretch gap-2 md:items-end">
+                          {remoteHosts.length > 0 ? (
+                            <div className="w-full space-y-1 text-right text-sm text-foreground">
+                              {remoteHosts.slice(0, 3).map((host) => (
+                                <div key={host.id} className="truncate">
+                                  {host.label}
+                                </div>
+                              ))}
+                              {remoteHosts.length > 3 ? (
+                                <div className="text-xs text-muted-foreground">+{remoteHosts.length - 3} more</div>
+                              ) : null}
+                            </div>
+                          ) : null}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              void state.handleOpenExternalPath("open_editor", appSettings?.filePathDisplay ?? "~/.kanna/data/settings.json")
+                            }}
+                          >
+                            <Code className="h-4 w-4 mr-1.5" />
+                            Open Settings
+                          </Button>
+                        </div>
+                      </SettingsRow>
 
                       <SettingsRow
                         title="Terminal Scrollback"

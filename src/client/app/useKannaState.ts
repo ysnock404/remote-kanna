@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useShallow } from "zustand/react/shallow"
-import { PROVIDERS, type AgentProvider, type AppSettingsPatch, type AppSettingsSnapshot, type AskUserQuestionAnswerMap, type ChatAttachment, type ChatDiffSnapshot, type ChatHistoryPage, type KeybindingsSnapshot, type LlmProviderSnapshot, type LlmProviderValidationResult, type ModelOptions, type ProviderCatalogEntry, type QueuedChatMessage, type StandaloneTranscriptExportCommandResult, type TranscriptEntry, type UpdateInstallResult, type UpdateSnapshot, type UserPromptEntry } from "../../shared/types"
+import { PROVIDERS, type AgentProvider, type AppSettingsPatch, type AppSettingsSnapshot, type AskUserQuestionAnswerMap, type ChatAttachment, type ChatDiffSnapshot, type ChatHistoryPage, type KeybindingsSnapshot, type LlmProviderSnapshot, type LlmProviderValidationResult, type MachineId, type ModelOptions, type ProviderCatalogEntry, type QueuedChatMessage, type StandaloneTranscriptExportCommandResult, type TranscriptEntry, type UpdateInstallResult, type UpdateSnapshot, type UserPromptEntry } from "../../shared/types"
+import { getProjectLocationKey, LOCAL_MACHINE_ID } from "../../shared/project-location"
 import { NEW_CHAT_COMPOSER_ID, type ComposerState, useChatPreferencesStore } from "../stores/chatPreferencesStore"
 import { useRightSidebarStore } from "../stores/rightSidebarStore"
 import { useTerminalLayoutStore } from "../stores/terminalLayoutStore"
@@ -25,6 +26,8 @@ function sameRuntime(left: ChatSnapshot["runtime"] | null | undefined, right: Ch
   if (!left || !right) return false
   return left.chatId === right.chatId
     && left.projectId === right.projectId
+    && left.machineId === right.machineId
+    && left.machineLabel === right.machineLabel
     && left.localPath === right.localPath
     && left.title === right.title
     && left.status === right.status
@@ -594,19 +597,21 @@ async function isServerReady(fetchImpl: typeof fetch = fetch) {
 
 export interface ProjectRequest {
   mode: "new" | "existing"
+  machineId?: MachineId
   localPath: string
   title: string
 }
 
 export type StartChatIntent =
   | { kind: "project_id"; projectId: string }
-  | { kind: "local_path"; localPath: string }
+  | { kind: "local_path"; machineId?: MachineId; localPath: string }
   | { kind: "project_request"; project: ProjectRequest }
 
 export function resolveComposeIntent(params: {
   selectedProjectId: string | null
   sidebarProjectId?: string | null
   fallbackLocalProjectPath?: string | null
+  fallbackLocalProjectMachineId?: MachineId | null
 }): StartChatIntent | null {
   const projectId = params.selectedProjectId ?? params.sidebarProjectId ?? null
   if (projectId) {
@@ -614,7 +619,9 @@ export function resolveComposeIntent(params: {
   }
 
   if (params.fallbackLocalProjectPath) {
-    return { kind: "local_path", localPath: params.fallbackLocalProjectPath }
+    return params.fallbackLocalProjectMachineId
+      ? { kind: "local_path", localPath: params.fallbackLocalProjectPath, machineId: params.fallbackLocalProjectMachineId }
+      : { kind: "local_path", localPath: params.fallbackLocalProjectPath }
   }
 
   return null
@@ -681,7 +688,7 @@ export interface KannaState {
   loadOlderHistory: () => Promise<void>
   handleCreateChat: (projectId: string) => Promise<void>
   handleForkChat: (chat: SidebarChatRow) => Promise<void>
-  handleOpenLocalProject: (localPath: string) => Promise<void>
+  handleOpenLocalProject: (localPath: string, machineId?: MachineId) => Promise<void>
   handleCreateProject: (project: ProjectRequest) => Promise<void>
   handleCheckForUpdates: (options?: { force?: boolean }) => Promise<void>
   handleInstallUpdate: () => Promise<void>
@@ -1229,7 +1236,8 @@ export function useKannaState(activeChatId: string | null): KannaState {
   const isProcessing = isProcessingStatus(effectiveRuntimeStatus ?? undefined)
   const canCancel = canCancelStatus(effectiveRuntimeStatus ?? undefined)
   const isDraining = runtime?.isDraining ?? false
-  const fallbackLocalProjectPath = localProjects?.projects[0]?.localPath ?? null
+  const fallbackLocalProject = localProjects?.projects[0] ?? null
+  const fallbackLocalProjectPath = fallbackLocalProject?.localPath ?? null
   const navbarLocalPath =
     runtime?.localPath
     ?? fallbackLocalProjectPath
@@ -1383,14 +1391,18 @@ export function useKannaState(activeChatId: string | null): KannaState {
     }
 
     if (intent.kind === "local_path") {
-      const result = await socket.command<{ projectId: string }>({ type: "project.open", localPath: intent.localPath })
+      const result = await socket.command<{ projectId: string }>({
+        type: "project.open",
+        localPath: intent.localPath,
+        machineId: intent.machineId,
+      })
       return { projectId: result.projectId, localPath: intent.localPath }
     }
 
     const result = await socket.command<{ projectId: string }>(
       intent.project.mode === "new"
-        ? { type: "project.create", localPath: intent.project.localPath, title: intent.project.title }
-        : { type: "project.open", localPath: intent.project.localPath }
+        ? { type: "project.create", localPath: intent.project.localPath, title: intent.project.title, machineId: intent.project.machineId }
+        : { type: "project.open", localPath: intent.project.localPath, machineId: intent.project.machineId }
     )
     return { projectId: result.projectId, localPath: intent.project.localPath }
   }, [socket])
@@ -1403,7 +1415,12 @@ export function useKannaState(activeChatId: string | null): KannaState {
           ? intent.localPath
           : intent.project.localPath
       if (localPath) {
-        setStartingLocalPath(localPath)
+        const machineId = intent.kind === "local_path"
+          ? intent.machineId ?? LOCAL_MACHINE_ID
+          : intent.kind === "project_request"
+            ? intent.project.machineId ?? LOCAL_MACHINE_ID
+            : LOCAL_MACHINE_ID
+        setStartingLocalPath(getProjectLocationKey(machineId, localPath))
       }
 
       const { projectId } = await resolveProjectIdForStartChat(intent)
@@ -1438,8 +1455,8 @@ export function useKannaState(activeChatId: string | null): KannaState {
     }
   }, [navigate, socket])
 
-  const handleOpenLocalProject = useCallback(async (localPath: string) => {
-    await startChatFromIntent({ kind: "local_path", localPath })
+  const handleOpenLocalProject = useCallback(async (localPath: string, machineId?: MachineId) => {
+    await startChatFromIntent({ kind: "local_path", localPath, machineId })
   }, [startChatFromIntent])
 
   const handleCreateProject = useCallback(async (project: ProjectRequest) => {
@@ -1580,6 +1597,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
         const project = await socket.command<{ projectId: string }>({
           type: "project.open",
           localPath: fallbackLocalProjectPath,
+          machineId: fallbackLocalProject?.machineId,
         })
         projectId = project.projectId
         setSelectedProjectId(projectId)
@@ -1638,7 +1656,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
       setCommandError(error instanceof Error ? error.message : String(error))
       throw error
     }
-  }, [activeChatId, fallbackLocalProjectPath, isProcessing, navigate, optimisticUserPrompts, selectedProjectId, serverTranscriptEntries, sidebarProjectGroups, socket])
+  }, [activeChatId, fallbackLocalProject?.machineId, fallbackLocalProjectPath, isProcessing, navigate, optimisticUserPrompts, selectedProjectId, serverTranscriptEntries, sidebarProjectGroups, socket])
 
   const handleSteerQueuedMessage = useCallback(async (queuedMessageId: string) => {
     if (!activeChatId) return
@@ -1937,6 +1955,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
       selectedProjectId,
       sidebarProjectId: sidebarProjectGroups[0]?.groupKey,
       fallbackLocalProjectPath,
+      fallbackLocalProjectMachineId: fallbackLocalProject?.machineId,
     })
     if (intent) {
       void startChatFromIntent(intent)
@@ -1944,7 +1963,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     }
 
     navigate("/")
-  }, [fallbackLocalProjectPath, navigate, selectedProjectId, sidebarProjectGroups, startChatFromIntent])
+  }, [fallbackLocalProject?.machineId, fallbackLocalProjectPath, navigate, selectedProjectId, sidebarProjectGroups, startChatFromIntent])
 
   const openSidebar = useCallback(() => setSidebarOpen(true), [])
   const closeSidebar = useCallback(() => setSidebarOpen(false), [])

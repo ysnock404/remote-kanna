@@ -1,10 +1,12 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
-import type { AgentProvider } from "../shared/types"
+import type { AgentProvider, MachineId } from "../shared/types"
+import { getProjectLocationKey, LOCAL_MACHINE_ID } from "../shared/project-location"
 import { resolveLocalPath } from "./paths"
 
 export interface DiscoveredProject {
+  machineId?: MachineId
   localPath: string
   title: string
   modifiedAt: number
@@ -65,9 +67,12 @@ function mergeDiscoveredProjects(projects: Iterable<DiscoveredProject>): Discove
   const merged = new Map<string, DiscoveredProject>()
 
   for (const project of projects) {
-    const existing = merged.get(project.localPath)
+    const machineId = project.machineId ?? LOCAL_MACHINE_ID
+    const key = getProjectLocationKey(machineId, project.localPath)
+    const existing = merged.get(key)
     if (!existing || project.modifiedAt > existing.modifiedAt) {
-      merged.set(project.localPath, {
+      merged.set(key, {
+        machineId,
         localPath: project.localPath,
         title: project.title || path.basename(project.localPath) || project.localPath,
         modifiedAt: project.modifiedAt,
@@ -107,6 +112,7 @@ export class ClaudeProjectDiscoveryAdapter implements ProjectDiscoveryAdapter {
       const stat = statSync(path.join(projectsDir, entry.name))
       projects.push({
         provider: this.provider,
+        machineId: LOCAL_MACHINE_ID,
         localPath: normalizedPath,
         title: path.basename(normalizedPath) || normalizedPath,
         modifiedAt: stat.mtimeMs,
@@ -251,6 +257,7 @@ export class CodexProjectDiscoveryAdapter implements ProjectDiscoveryAdapter {
 
       projects.push({
         provider: this.provider,
+        machineId: LOCAL_MACHINE_ID,
         localPath: normalizedPath,
         title: path.basename(normalizedPath) || normalizedPath,
         modifiedAt,
@@ -269,6 +276,7 @@ export class CodexProjectDiscoveryAdapter implements ProjectDiscoveryAdapter {
 
       projects.push({
         provider: this.provider,
+        machineId: LOCAL_MACHINE_ID,
         localPath: normalizedPath,
         title: path.basename(normalizedPath) || normalizedPath,
         modifiedAt,

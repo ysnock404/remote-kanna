@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises"
 import { APP_NAME, getRuntimeProfile } from "../shared/branding"
 import type { ChatAttachment } from "../shared/types"
 import type { ShareMode } from "../shared/share"
+import { LOCAL_MACHINE_ID, normalizeMachineId } from "../shared/project-location"
 import { createAuthManager } from "./auth"
 import { EventStore } from "./event-store"
 import { AgentCoordinator } from "./agent"
@@ -13,6 +14,7 @@ import { discoverProjects, type DiscoveredProject } from "./discovery"
 import { KeybindingsManager } from "./keybindings"
 import { readLlmProviderSnapshot, validateLlmProviderCredentials, writeLlmProviderSnapshot } from "./llm-provider"
 import { getMachineDisplayName } from "./machine-name"
+import { discoverRemoteProjects, resolveProjectRuntime } from "./remote-hosts"
 import { TerminalManager } from "./terminal-manager"
 import { UpdateManager } from "./update-manager"
 import type { UpdateInstallAttemptResult } from "./cli-runtime"
@@ -94,9 +96,13 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
   await diffStore.initialize()
   await store.migrateLegacyTranscripts(options.onMigrationProgress)
   let discoveredProjects: DiscoveredProject[] = []
+  const appSettings = new AppSettingsManager(path.join(store.dataDir, "settings.json"))
+  await appSettings.initialize()
 
   async function refreshDiscovery() {
-    discoveredProjects = discoverProjects()
+    const localProjects = discoverProjects()
+    const remoteProjects = await discoverRemoteProjects(appSettings.getSnapshot().remoteHosts ?? [])
+    discoveredProjects = [...localProjects, ...remoteProjects]
     return discoveredProjects
   }
 
@@ -106,8 +112,6 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
   let router: ReturnType<typeof createWsRouter>
   const terminals = new TerminalManager()
   const keybindings = new KeybindingsManager()
-  const appSettings = new AppSettingsManager(path.join(store.dataDir, "settings.json"))
-  await appSettings.initialize()
   await keybindings.initialize()
   const analytics = new KannaAnalyticsReporter({
     settings: appSettings,
@@ -126,6 +130,7 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
   const agent = new AgentCoordinator({
     store,
     analytics,
+    resolveProjectRuntime: (project) => resolveProjectRuntime(normalizeMachineId(project.machineId), appSettings.getSnapshot().remoteHosts ?? []),
     onStateChange: (chatId?: string, options?: { immediate?: boolean }) => {
       if (chatId) {
         if (options?.immediate) {
@@ -155,6 +160,9 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
     getDiscoveredProjects: () => discoveredProjects,
     machineDisplayName,
     updateManager,
+  })
+  const disposeSettingsDiscoveryRefresh = appSettings.onChange(() => {
+    void refreshDiscovery().then(() => router.broadcastSnapshots())
   })
   const staleEmptyChatPruneInterval = setInterval(() => {
     void router.pruneStaleEmptyChats()
@@ -288,6 +296,7 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
       await agent.cancel(chatId)
     }
     router.dispose()
+    disposeSettingsDiscoveryRefresh()
     appSettings.dispose()
     keybindings.dispose()
     terminals.closeAll()
@@ -317,6 +326,9 @@ async function handleProjectUpload(req: Request, url: URL, store: EventStore) {
   const project = store.getProject(match[1])
   if (!project) {
     return Response.json({ error: "Project not found" }, { status: 404 })
+  }
+  if (project.machineId !== LOCAL_MACHINE_ID) {
+    return Response.json({ error: "Uploads for remote projects are not implemented yet" }, { status: 400 })
   }
 
   const formData = await req.formData()
@@ -373,6 +385,9 @@ async function handleAttachmentContent(req: Request, url: URL, store: EventStore
   if (!project) {
     return Response.json({ error: "Project not found" }, { status: 404 })
   }
+  if (project.machineId !== LOCAL_MACHINE_ID) {
+    return Response.json({ error: "Remote attachment content is not implemented yet" }, { status: 400 })
+  }
 
   const storedName = decodeURIComponent(match[2])
   if (!storedName || storedName.includes("/") || storedName.includes("\\") || storedName === "." || storedName === "..") {
@@ -416,6 +431,9 @@ async function handleProjectFileContent(req: Request, url: URL, store: EventStor
   if (!project) {
     return Response.json({ error: "Project not found" }, { status: 404 })
   }
+  if (project.machineId !== LOCAL_MACHINE_ID) {
+    return Response.json({ error: "Remote project file content is not implemented yet" }, { status: 400 })
+  }
 
   const relativePath = path.posix.normalize(decodeURIComponent(match[2]).replaceAll("\\", "/"))
   if (!relativePath || relativePath === "." || relativePath.startsWith("../") || relativePath.includes("/../") || path.posix.isAbsolute(relativePath)) {
@@ -458,6 +476,9 @@ async function handleProjectUploadDelete(req: Request, url: URL, store: EventSto
   const project = store.getProject(match[1])
   if (!project) {
     return Response.json({ error: "Project not found" }, { status: 404 })
+  }
+  if (project.machineId !== LOCAL_MACHINE_ID) {
+    return Response.json({ error: "Remote upload deletion is not implemented yet" }, { status: 400 })
   }
 
   const storedName = decodeURIComponent(match[2])

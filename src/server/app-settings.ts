@@ -24,6 +24,7 @@ import {
   type DefaultProviderPreference,
   type EditorPreset,
   type ProviderPreference,
+  type RemoteHostConfig,
 } from "../shared/types"
 
 interface AppSettingsFile {
@@ -41,6 +42,7 @@ interface AppSettingsFile {
     preset?: unknown
     commandTemplate?: unknown
   }
+  remoteHosts?: unknown
   defaultProvider?: unknown
   providerDefaults?: {
     claude?: Partial<ProviderPreference<Partial<ClaudeModelOptions>>> & { effort?: unknown }
@@ -157,6 +159,68 @@ function normalizeEditorCommandTemplate(value: unknown, preset: EditorPreset) {
   return trimmed || getDefaultEditorCommandTemplate(preset)
 }
 
+function normalizeRemoteHostId(value: unknown) {
+  const trimmed = typeof value === "string" ? value.trim() : ""
+  return trimmed
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+}
+
+function normalizeRemoteHosts(value: unknown, warnings: string[]): RemoteHostConfig[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) {
+    warnings.push("remoteHosts must be an array")
+    return []
+  }
+
+  const hosts: RemoteHostConfig[] = []
+  const seenIds = new Set<string>()
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      warnings.push("remoteHosts entries must be objects")
+      continue
+    }
+
+    const record = entry as Record<string, unknown>
+    const sshTarget = typeof record.sshTarget === "string" ? record.sshTarget.trim() : ""
+    if (!sshTarget) {
+      warnings.push("remoteHosts entries require sshTarget")
+      continue
+    }
+
+    const explicitId = normalizeRemoteHostId(record.id)
+    const fallbackId = normalizeRemoteHostId(sshTarget)
+    const id = explicitId || fallbackId
+    if (!id || seenIds.has(id)) {
+      warnings.push(`remoteHosts entry has an invalid or duplicate id: ${id || String(record.id ?? sshTarget)}`)
+      continue
+    }
+    seenIds.add(id)
+
+    const label = typeof record.label === "string" && record.label.trim()
+      ? record.label.trim()
+      : sshTarget
+    const rawProjectRoots = Array.isArray(record.projectRoots) ? record.projectRoots : []
+    const projectRoots = rawProjectRoots
+      .map((root) => typeof root === "string" ? root.trim() : "")
+      .filter(Boolean)
+
+    hosts.push({
+      id,
+      label,
+      sshTarget,
+      enabled: record.enabled !== false,
+      projectRoots,
+      codexEnabled: record.codexEnabled !== false,
+      claudeEnabled: record.claudeEnabled === true,
+    })
+  }
+
+  return hosts
+}
+
 function normalizeClaudePreference(value?: {
   model?: unknown
   effort?: unknown
@@ -222,6 +286,7 @@ function toFilePayload(state: AppSettingsState) {
     chatSoundId: state.chatSoundId,
     terminal: state.terminal,
     editor: state.editor,
+    remoteHosts: state.remoteHosts,
     defaultProvider: state.defaultProvider,
     providerDefaults: state.providerDefaults,
   }
@@ -236,6 +301,7 @@ function toSnapshot(state: AppSettingsState): AppSettingsSnapshot {
     chatSoundId: state.chatSoundId,
     terminal: state.terminal,
     editor: state.editor,
+    remoteHosts: state.remoteHosts,
     defaultProvider: state.defaultProvider,
     providerDefaults: state.providerDefaults,
     warning: state.warning,
@@ -286,6 +352,7 @@ function normalizeAppSettings(
       preset: editorPreset,
       commandTemplate: normalizeEditorCommandTemplate(source?.editor?.commandTemplate, editorPreset),
     },
+    remoteHosts: normalizeRemoteHosts(source?.remoteHosts, warnings),
     defaultProvider: normalizeDefaultProvider(source?.defaultProvider),
     providerDefaults: normalizeProviderDefaults(source?.providerDefaults),
     warning: null,
@@ -314,6 +381,7 @@ function toComparablePayload(source: AppSettingsFile) {
     chatSoundId: source.chatSoundId,
     terminal: source.terminal,
     editor: source.editor,
+    remoteHosts: source.remoteHosts,
     defaultProvider: source.defaultProvider,
     providerDefaults: source.providerDefaults,
   }

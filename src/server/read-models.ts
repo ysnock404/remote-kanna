@@ -4,10 +4,14 @@ import type {
   ChatSnapshot,
   KannaStatus,
   LocalProjectsSnapshot,
+  MachineId,
+  RemoteHostConfig,
   SidebarChatRow,
   SidebarData,
   SidebarProjectGroup,
 } from "../shared/types"
+import { getMachineLabel, getProjectLocationKey, LOCAL_MACHINE_ID, normalizeMachineId } from "../shared/project-location"
+import { getRemoteMachineSummaries } from "./remote-hosts"
 import type { ChatRecord, StoreState } from "./events"
 import { resolveLocalPath } from "./paths"
 import { SERVER_PROVIDERS } from "./provider-catalog"
@@ -65,10 +69,14 @@ export function deriveSidebarData(
     nowMs?: number
     sidebarProjectOrder?: string[]
     drainingChatIds?: Set<string>
+    remoteHosts?: RemoteHostConfig[]
+    localMachineName?: string
   }
 ): SidebarData {
   const nowMs = options?.nowMs ?? Date.now()
   const drainingChatIds = options?.drainingChatIds ?? new Set<string>()
+  const remoteHosts = options?.remoteHosts ?? []
+  const localMachineName = options?.localMachineName ?? "Local"
   const chatsByProjectId = new Map<string, ChatRecord[]>()
   const archivedChatsByProjectId = new Map<string, ChatRecord[]>()
   for (const chat of state.chatsById.values()) {
@@ -97,6 +105,7 @@ export function deriveSidebarData(
   ]
 
   function toSidebarChatRows(project: NonNullable<typeof projects[number]>, projectChats: ChatRecord[]) {
+    const machineId = normalizeMachineId(project.machineId)
     return projectChats
       .sort((a, b) => getSidebarChatSortTimestamp(b) - getSidebarChatSortTimestamp(a))
       .map((chat) => ({
@@ -106,6 +115,8 @@ export function deriveSidebarData(
         title: chat.title,
         status: deriveStatus(chat, activeStatuses.get(chat.id)),
         unread: chat.unread,
+        machineId,
+        machineLabel: getMachineLabel(machineId, remoteHosts, localMachineName),
         localPath: project.localPath,
         provider: chat.provider,
         lastMessageAt: chat.lastMessageAt,
@@ -115,12 +126,15 @@ export function deriveSidebarData(
   }
 
   const projectGroups: SidebarProjectGroup[] = projects.map((project) => {
+    const machineId = normalizeMachineId(project.machineId)
     const chats = toSidebarChatRows(project, chatsByProjectId.get(project.id) ?? [])
     const archivedChats = toSidebarChatRows(project, archivedChatsByProjectId.get(project.id) ?? [])
     const { previewChats, olderChats } = getSidebarChatBuckets(chats, nowMs)
 
     return {
       groupKey: project.id,
+      machineId,
+      machineLabel: getMachineLabel(machineId, remoteHosts, localMachineName),
       localPath: project.localPath,
       chats,
       previewChats,
@@ -135,14 +149,18 @@ export function deriveSidebarData(
 
 export function deriveLocalProjectsSnapshot(
   state: StoreState,
-  discoveredProjects: Array<{ localPath: string; title: string; modifiedAt: number }>,
-  machineName: string
+  discoveredProjects: Array<{ machineId?: MachineId; localPath: string; title: string; modifiedAt: number }>,
+  machineName: string,
+  remoteHosts: RemoteHostConfig[] = []
 ): LocalProjectsSnapshot {
   const projects = new Map<string, LocalProjectsSnapshot["projects"][number]>()
 
   for (const project of discoveredProjects) {
-    const normalizedPath = resolveLocalPath(project.localPath)
-    projects.set(normalizedPath, {
+    const machineId = project.machineId ?? LOCAL_MACHINE_ID
+    const normalizedPath = machineId === LOCAL_MACHINE_ID ? resolveLocalPath(project.localPath) : project.localPath
+    projects.set(getProjectLocationKey(machineId, normalizedPath), {
+      machineId,
+      machineLabel: getMachineLabel(machineId, remoteHosts, machineName),
       localPath: normalizedPath,
       title: project.title,
       source: "discovered",
@@ -152,13 +170,16 @@ export function deriveLocalProjectsSnapshot(
   }
 
   for (const project of [...state.projectsById.values()].filter((entry) => !entry.deletedAt)) {
+    const machineId = normalizeMachineId(project.machineId)
     const chats = [...state.chatsById.values()].filter((chat) => chat.projectId === project.id && !chat.deletedAt && !chat.archivedAt)
     const lastOpenedAt = chats.reduce(
       (latest, chat) => Math.max(latest, getSidebarChatSortTimestamp(chat)),
       project.updatedAt
     )
 
-    projects.set(project.localPath, {
+    projects.set(getProjectLocationKey(machineId, project.localPath), {
+      machineId,
+      machineLabel: getMachineLabel(machineId, remoteHosts, machineName),
       localPath: project.localPath,
       title: project.title,
       source: "saved",
@@ -173,6 +194,15 @@ export function deriveLocalProjectsSnapshot(
       displayName: machineName,
       platform: process.platform,
     },
+    machines: [
+      {
+        id: "local",
+        displayName: machineName,
+        platform: process.platform,
+        enabled: true,
+      },
+      ...getRemoteMachineSummaries(remoteHosts),
+    ],
     projects: [...projects.values()].sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0)),
   }
 }
@@ -182,7 +212,11 @@ export function deriveChatSnapshot(
   activeStatuses: Map<string, KannaStatus>,
   drainingChatIds: Set<string>,
   chatId: string,
-  getMessages: (chatId: string) => Pick<ChatSnapshot, "messages" | "history">
+  getMessages: (chatId: string) => Pick<ChatSnapshot, "messages" | "history">,
+  options?: {
+    remoteHosts?: RemoteHostConfig[]
+    localMachineName?: string
+  }
 ): ChatSnapshot | null {
   const chat = state.chatsById.get(chatId)
   if (!chat || chat.deletedAt) return null
@@ -192,6 +226,8 @@ export function deriveChatSnapshot(
   const runtime: ChatRuntime = {
     chatId: chat.id,
     projectId: project.id,
+    machineId: normalizeMachineId(project.machineId),
+    machineLabel: getMachineLabel(normalizeMachineId(project.machineId), options?.remoteHosts ?? [], options?.localMachineName ?? "Local"),
     localPath: project.localPath,
     title: chat.title,
     status: deriveStatus(chat, activeStatuses.get(chat.id)),

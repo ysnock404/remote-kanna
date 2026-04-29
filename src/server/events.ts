@@ -1,4 +1,4 @@
-import type { AgentProvider, ProjectSummary, QueuedChatMessage, TranscriptEntry } from "../shared/types"
+import type { AgentProvider, MachineId, ProjectSummary, QueuedChatMessage, TranscriptEntry } from "../shared/types"
 
 export interface ProjectRecord extends ProjectSummary {
   deletedAt?: number
@@ -24,6 +24,10 @@ export interface ChatRecord {
 
 export interface StoreState {
   projectsById: Map<string, ProjectRecord>
+  /**
+   * Location key is machineId + path. The property keeps its old name so
+   * existing call sites can migrate incrementally.
+   */
   projectIdsByPath: Map<string, string>
   chatsById: Map<string, ChatRecord>
   queuedMessagesByChatId: Map<string, QueuedChatMessage[]>
@@ -44,6 +48,7 @@ export type ProjectEvent = {
   type: "project_opened"
   timestamp: number
   projectId: string
+  machineId?: MachineId
   localPath: string
   title: string
 } | {

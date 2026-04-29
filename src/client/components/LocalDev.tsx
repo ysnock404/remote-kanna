@@ -13,7 +13,8 @@ import {
   Terminal,
 } from "lucide-react"
 import { APP_NAME, getCliInvocation, SDK_CLIENT_APP } from "../../shared/branding"
-import type { LocalProjectsSnapshot } from "../../shared/types"
+import { getProjectLocationKey } from "../../shared/project-location"
+import type { LocalProjectSummary, LocalProjectsSnapshot, MachineId } from "../../shared/types"
 import type { SocketStatus } from "../app/socket"
 import { PageHeader } from "../app/PageHeader"
 import { getPathBasename } from "../lib/formatters"
@@ -30,7 +31,7 @@ interface LocalDevProps {
   commandError: string | null
   newProjectOpen: boolean
   onNewProjectOpenChange: (open: boolean) => void
-  onOpenProject: (localPath: string) => Promise<void>
+  onOpenProject: (localPath: string, machineId?: MachineId) => Promise<void>
   onCreateProject: (project: { mode: "new" | "existing"; localPath: string; title: string }) => Promise<void>
 }
 
@@ -128,14 +129,17 @@ function Step({
 }
 
 function ProjectCard({
-  localPath,
+  project,
   loading,
   onClick,
 }: {
-  localPath: string
+  project: LocalProjectSummary
   loading: boolean
   onClick: () => void
 }) {
+  const machineId = project.machineId ?? "local"
+  const machineLabel = project.machineLabel ?? "Local"
+  const isRemote = machineId !== "local"
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -148,8 +152,15 @@ function ProjectCard({
           onClick={onClick}
         >
           <Folder className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-          <span className="font-medium text-foreground truncate flex-1">
-            {getPathBasename(localPath)}
+          <span className="min-w-0 flex-1">
+            <span className="block font-medium text-foreground truncate">
+              {getPathBasename(project.localPath)}
+            </span>
+            {isRemote ? (
+              <span className="block text-xs text-muted-foreground truncate">
+                {machineLabel}
+              </span>
+            ) : null}
           </span>
           {loading ? (
             <Loader2 className="h-4 w-4 text-muted-foreground group-hover:text-primary animate-spin flex-shrink-0" />
@@ -159,7 +170,7 @@ function ProjectCard({
         </button>
       </TooltipTrigger>
       <TooltipContent>
-        <p>{localPath}</p>
+        <p>{isRemote ? `${machineLabel}: ${project.localPath}` : project.localPath}</p>
       </TooltipContent>
     </Tooltip>
   )
@@ -279,11 +290,11 @@ export function LocalDev({
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4 3xl:grid-cols-5 gap-2">
                 {projects.map((project) => (
                   <ProjectCard
-                    key={project.localPath}
-                    localPath={project.localPath}
-                    loading={startingLocalPath === project.localPath}
+                    key={getProjectLocationKey(project.machineId ?? "local", project.localPath)}
+                    project={project}
+                    loading={startingLocalPath === getProjectLocationKey(project.machineId ?? "local", project.localPath)}
                     onClick={() => {
-                      void onOpenProject(project.localPath)
+                      void onOpenProject(project.localPath, project.machineId)
                     }}
                   />
                 ))}
