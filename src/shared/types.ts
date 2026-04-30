@@ -331,6 +331,39 @@ export interface HiddenProjectSummary extends ProjectSummary {
   hiddenAt: number
 }
 
+export interface CodexSkillSummary {
+  name: string
+  description?: string
+  path: string
+  scope: "system" | "user"
+  updatedAt?: number
+}
+
+export interface CodexPluginSummary {
+  name: string
+  displayName?: string
+  description?: string
+  version?: string
+  path: string
+  manifestPath?: string
+  marketplacePath?: string
+  source: "installed" | "marketplace"
+  installation?: string
+  authentication?: string
+  category?: string
+  skillCount?: number
+  commandCount?: number
+  updatedAt?: number
+}
+
+export interface CodexAssetsSnapshot {
+  machineId: MachineId
+  scannedAt: number
+  skills: CodexSkillSummary[]
+  plugins: CodexPluginSummary[]
+  warnings?: string[]
+}
+
 export interface SidebarChatRow {
   _id: string
   _creationTime: number

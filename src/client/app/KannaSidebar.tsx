@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type ReactNode } from "react"
-import { Eye, Flower, FolderPlus, Loader2, PanelLeft, X, Menu, Plus, RotateCcw, Settings, MessageCircle, Search, Plug, Sparkles, SquarePen } from "lucide-react"
+import { Eye, Flower, FolderPlus, Loader2, PanelLeft, X, Menu, Plus, RefreshCw, RotateCcw, Settings, MessageCircle, Search, Plug, Sparkles, SquarePen } from "lucide-react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { APP_NAME } from "../../shared/branding"
 import { LOCAL_MACHINE_ID } from "../../shared/project-location"
@@ -13,7 +13,7 @@ import { ChatRow } from "../components/chat-ui/sidebar/ChatRow"
 import { LocalProjectsSection } from "../components/chat-ui/sidebar/LocalProjectsSection"
 import { MachineSelector } from "../components/MachineSelector"
 import { getResolvedKeybindings } from "../lib/keybindings"
-import type { HiddenProjectSummary, KeybindingsSnapshot, LocalProjectsSnapshot, MachineId, MachineSummary, SidebarData, SidebarChatRow, SidebarProjectGroup, UpdateSnapshot } from "../../shared/types"
+import type { CodexAssetsSnapshot, CodexPluginSummary, CodexSkillSummary, HiddenProjectSummary, KeybindingsSnapshot, LocalProjectsSnapshot, MachineId, MachineSummary, SidebarData, SidebarChatRow, SidebarProjectGroup, UpdateSnapshot } from "../../shared/types"
 import type { SocketStatus } from "./socket"
 import {
   getSidebarJumpTargetIndex,
@@ -77,6 +77,7 @@ interface KannaSidebarProps {
   onHideProject: (projectId: string) => void
   onListHiddenProjects: (machineId: MachineId) => Promise<HiddenProjectSummary[]>
   onRestoreHiddenProject: (project: HiddenProjectSummary) => Promise<void>
+  onScanCodexAssets: (machineId: MachineId) => Promise<CodexAssetsSnapshot>
   onReorderProjectGroups: (projectIds: string[]) => void
   editorLabel: string
   updateSnapshot: UpdateSnapshot | null
@@ -193,6 +194,54 @@ function SidebarActionRow({
   )
 }
 
+function AssetBadge({ children }: { children: ReactNode }) {
+  return (
+    <span className="shrink-0 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">
+      {children}
+    </span>
+  )
+}
+
+function SkillAssetRow({ skill }: { skill: CodexSkillSummary }) {
+  return (
+    <div className="rounded-lg border border-border/0 px-3 py-2 transition-colors hover:border-border hover:bg-muted">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0 truncate text-sm font-medium">{skill.name}</div>
+        <AssetBadge>{skill.scope}</AssetBadge>
+      </div>
+      {skill.description ? (
+        <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{skill.description}</div>
+      ) : null}
+      <div className="mt-1 truncate text-[11px] text-muted-foreground/70">{skill.path}</div>
+    </div>
+  )
+}
+
+function PluginAssetRow({ plugin }: { plugin: CodexPluginSummary }) {
+  const title = plugin.displayName?.trim() || plugin.name
+  return (
+    <div className="rounded-lg border border-border/0 px-3 py-2 transition-colors hover:border-border hover:bg-muted">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0 truncate text-sm font-medium">{title}</div>
+        <div className="flex shrink-0 items-center gap-1">
+          <AssetBadge>{plugin.source}</AssetBadge>
+          {plugin.installation ? <AssetBadge>{plugin.installation}</AssetBadge> : null}
+        </div>
+      </div>
+      {plugin.description ? (
+        <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{plugin.description}</div>
+      ) : null}
+      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground/70">
+        {plugin.version ? <span>v{plugin.version}</span> : null}
+        {plugin.category ? <span>{plugin.category}</span> : null}
+        {plugin.skillCount !== undefined ? <span>{plugin.skillCount} skills</span> : null}
+        {plugin.commandCount !== undefined ? <span>{plugin.commandCount} commands</span> : null}
+      </div>
+      <div className="mt-1 truncate text-[11px] text-muted-foreground/70">{plugin.path}</div>
+    </div>
+  )
+}
+
 function KannaSidebarImpl({
   data,
   activeChatId,
@@ -226,6 +275,7 @@ function KannaSidebarImpl({
   onHideProject,
   onListHiddenProjects,
   onRestoreHiddenProject,
+  onScanCodexAssets,
   onReorderProjectGroups,
   editorLabel,
   updateSnapshot,
@@ -250,6 +300,10 @@ function KannaSidebarImpl({
   const [restoringHiddenProjectId, setRestoringHiddenProjectId] = useState<string | null>(null)
   const [searchDialogOpen, setSearchDialogOpen] = useState(false)
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState("")
+  const [assetDialog, setAssetDialog] = useState<"plugins" | "skills" | null>(null)
+  const [codexAssets, setCodexAssets] = useState<CodexAssetsSnapshot | null>(null)
+  const [codexAssetsLoading, setCodexAssetsLoading] = useState(false)
+  const [codexAssetsError, setCodexAssetsError] = useState<string | null>(null)
   const resolvedKeybindings = useMemo(() => getResolvedKeybindings(keybindings), [keybindings])
   const visibleChats = useMemo(
     () => getVisibleSidebarChats(data.projectGroups, collapsedSections, expandedGroups),
@@ -326,6 +380,7 @@ function KannaSidebarImpl({
 
     return results.slice(0, 30)
   }, [activeMachineProjectGroups, generalProjectGroups, sidebarSearchQuery])
+  const activeCodexAssets = codexAssets?.machineId === activeMachineId ? codexAssets : null
 
   const activeVisibleCount = visibleChats.length
   const archivedProject = useMemo(
@@ -430,10 +485,27 @@ function KannaSidebarImpl({
     }
   }, [onRestoreHiddenProject])
 
+  const loadCodexAssets = useCallback(async () => {
+    setCodexAssetsLoading(true)
+    setCodexAssetsError(null)
+    try {
+      setCodexAssets(await onScanCodexAssets(activeMachineId))
+    } catch (error) {
+      setCodexAssetsError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setCodexAssetsLoading(false)
+    }
+  }, [activeMachineId, onScanCodexAssets])
+
   useEffect(() => {
     if (!hiddenProjectsDialogOpen) return
     void loadHiddenProjects()
   }, [hiddenProjectsDialogOpen, loadHiddenProjects])
+
+  useEffect(() => {
+    if (!assetDialog) return
+    void loadCodexAssets()
+  }, [assetDialog, loadCodexAssets])
 
   const handleCreateChatInCurrentProject = useCallback(() => {
     if (!currentProjectId || !canCreateChatInCurrentProject) return
@@ -817,8 +889,16 @@ function KannaSidebarImpl({
                 label="Search"
                 onClick={() => setSearchDialogOpen(true)}
               />
-              <SidebarActionRow icon={Plug} label="Plugins" disabled />
-              <SidebarActionRow icon={Sparkles} label="Skills" disabled />
+              <SidebarActionRow
+                icon={Plug}
+                label="Plugins"
+                onClick={() => setAssetDialog("plugins")}
+              />
+              <SidebarActionRow
+                icon={Sparkles}
+                label="Skills"
+                onClick={() => setAssetDialog("skills")}
+              />
             </div>
 
             <ProjectsPanelMenu
@@ -1093,6 +1173,79 @@ function KannaSidebarImpl({
             ) : (
               <p className="px-1 py-3 text-sm text-muted-foreground">
                 Search project names, paths, and chat titles.
+              </p>
+            )}
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={assetDialog !== null}
+        onOpenChange={(dialogOpen) => {
+          if (!dialogOpen) {
+            setAssetDialog(null)
+            setCodexAssetsError(null)
+          }
+        }}
+      >
+        <DialogContent size="md">
+          <DialogHeader>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <DialogTitle>{assetDialog === "plugins" ? "Plugins" : "Skills"}</DialogTitle>
+                <DialogDescription>
+                  {activeMachine?.displayName ?? "Current device"} Codex assets
+                </DialogDescription>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={codexAssetsLoading}
+                onClick={() => void loadCodexAssets()}
+                className="shrink-0 gap-1.5"
+              >
+                {codexAssetsLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                Refresh
+              </Button>
+            </div>
+          </DialogHeader>
+          <DialogBody className="space-y-3">
+            {codexAssetsError ? (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {codexAssetsError}
+              </div>
+            ) : null}
+            {activeCodexAssets?.warnings?.length ? (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                {activeCodexAssets.warnings.slice(0, 3).join(" ")}
+              </div>
+            ) : null}
+            {codexAssetsLoading && !activeCodexAssets ? (
+              <div className="flex items-center gap-2 px-1 py-4 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Scanning Codex assets
+              </div>
+            ) : assetDialog === "plugins" ? (
+              activeCodexAssets?.plugins.length ? (
+                <div className="max-h-[58vh] space-y-1 overflow-y-auto">
+                  {activeCodexAssets.plugins.map((plugin) => (
+                    <PluginAssetRow key={`${plugin.source}:${plugin.manifestPath ?? plugin.path}:${plugin.name}`} plugin={plugin} />
+                  ))}
+                </div>
+              ) : (
+                <p className="px-1 py-3 text-sm text-muted-foreground">
+                  No Codex plugins found on {activeMachine?.displayName ?? "this device"}.
+                </p>
+              )
+            ) : activeCodexAssets?.skills.length ? (
+              <div className="max-h-[58vh] space-y-1 overflow-y-auto">
+                {activeCodexAssets.skills.map((skill) => (
+                  <SkillAssetRow key={`${skill.scope}:${skill.path}:${skill.name}`} skill={skill} />
+                ))}
+              </div>
+            ) : (
+              <p className="px-1 py-3 text-sm text-muted-foreground">
+                No Codex skills found on {activeMachine?.displayName ?? "this device"}.
               </p>
             )}
           </DialogBody>

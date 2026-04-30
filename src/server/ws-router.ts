@@ -8,6 +8,7 @@ import type { AgentCoordinator } from "./agent"
 import type { AnalyticsReporter } from "./analytics"
 import { NoopAnalyticsReporter } from "./analytics"
 import type { AppSettingsManager } from "./app-settings"
+import { scanLocalCodexAssets, scanRemoteCodexAssets } from "./codex-assets"
 import type { DiscoveredProject } from "./discovery"
 import { DiffStore } from "./diff-store"
 import { EventStore } from "./event-store"
@@ -1291,6 +1292,14 @@ export function createWsRouter({
         }
         case "settings.writeKeybindings": {
           const snapshot = await keybindings.write(command.bindings)
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result: snapshot })
+          return
+        }
+        case "codex.assets.scan": {
+          const machineId = normalizeMachineId(command.machineId)
+          const snapshot = machineId === LOCAL_MACHINE_ID
+            ? await scanLocalCodexAssets(machineId)
+            : await scanRemoteCodexAssets(machineId, resolveSshHost(machineId))
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result: snapshot })
           return
         }

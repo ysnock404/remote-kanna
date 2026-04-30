@@ -17,7 +17,7 @@ import { ChatPage } from "./ChatPage"
 import { LocalProjectsPage } from "./LocalProjectsPage"
 import { SettingsPage } from "./SettingsPage"
 import { useKannaState } from "./useKannaState"
-import type { AppSettingsSnapshot, HiddenProjectSummary, MachineId } from "../../shared/types"
+import type { AppSettingsSnapshot, CodexAssetsSnapshot, HiddenProjectSummary, MachineId } from "../../shared/types"
 
 const VERSION_SEEN_STORAGE_KEY = "kanna:last-seen-version"
 const AUTH_STATUS_RETRY_DELAY_MS = 500
@@ -328,6 +328,9 @@ function KannaLayout() {
   const handleSidebarRestoreHiddenProject = useCallback(async (project: HiddenProjectSummary) => {
     await state.socket.command({ type: "project.open", localPath: project.localPath, machineId: project.machineId })
   }, [state.socket])
+  const handleSidebarScanCodexAssets = useCallback(async (machineId: MachineId) => {
+    return await state.socket.command<CodexAssetsSnapshot>({ type: "codex.assets.scan", machineId })
+  }, [state.socket])
   const handleSidebarReorderProjectGroups = useCallback((projectIds: string[]) => {
     void state.handleReorderProjectGroups(projectIds)
   }, [state.handleReorderProjectGroups])
@@ -377,6 +380,7 @@ function KannaLayout() {
       onHideProject={handleSidebarHideProject}
       onListHiddenProjects={handleSidebarListHiddenProjects}
       onRestoreHiddenProject={handleSidebarRestoreHiddenProject}
+      onScanCodexAssets={handleSidebarScanCodexAssets}
       onReorderProjectGroups={handleSidebarReorderProjectGroups}
       editorLabel={state.editorLabel}
       updateSnapshot={state.updateSnapshot}
@@ -398,6 +402,7 @@ function KannaLayout() {
     handleSidebarReorderProjectGroups,
     handleSidebarListHiddenProjects,
     handleSidebarRestoreHiddenProject,
+    handleSidebarScanCodexAssets,
     handleSidebarHideProject,
     showMobileOpenButton,
     state.activeChatId,
