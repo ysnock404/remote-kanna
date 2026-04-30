@@ -42,6 +42,7 @@ interface Props {
   onOpenExternalPath?: (action: "open_finder" | "open_editor", localPath: string, machineId?: MachineId) => void
   onHideProject?: (projectId: string) => void
   onReorderGroups?: (newOrder: string[]) => void
+  reorderable?: boolean
   isConnected?: boolean
   startingLocalPath?: string | null
 }
@@ -62,6 +63,7 @@ interface SortableProjectGroupProps {
   onHideProject?: (projectId: string) => void
   isConnected?: boolean
   startingLocalPath?: string | null
+  reorderable: boolean
 }
 
 const DRAG_REORDER_TRIGGER_OFFSET_PX = 20
@@ -189,6 +191,7 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
   onHideProject,
   isConnected,
   startingLocalPath,
+  reorderable,
 }: SortableProjectGroupProps) {
   const { groupKey, localPath } = group
   const title = group.title?.trim() || getPathBasename(localPath)
@@ -206,7 +209,7 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: groupKey })
+  } = useSortable({ id: groupKey, disabled: !reorderable })
 
   const style = {
     transform: CSS.Translate.toString(transform ? { ...transform, x: 0 } : null),
@@ -218,11 +221,12 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
       ref={setActivatorNodeRef}
       className={cn(
         "sticky top-0 bg-background dark:bg-card z-10 relative p-[10px] flex items-center justify-between",
-        "cursor-grab active:cursor-grabbing select-none touch-none",
-        isDragging && "cursor-grabbing"
+        "select-none touch-none",
+        reorderable && "cursor-grab active:cursor-grabbing",
+        isDragging && reorderable && "cursor-grabbing"
       )}
       onClick={() => onToggleSection(groupKey)}
-      {...listeners}
+      {...(reorderable ? listeners : {})}
     >
       <div className="flex items-center gap-2">
         <span className="relative size-3.5 shrink-0 cursor-pointer">
@@ -310,9 +314,9 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
       style={style}
       className={cn(
         "group/section",
-        isDragging && "opacity-50 shadow-lg z-50 relative"
+        isDragging && reorderable && "opacity-50 shadow-lg z-50 relative"
       )}
-      {...attributes}
+      {...(reorderable ? attributes : {})}
     >
       {hasProjectMenu ? (
         <ProjectSectionMenu
@@ -381,6 +385,7 @@ const LocalProjectsSectionImpl = function LocalProjectsSection({
   onOpenExternalPath,
   onHideProject,
   onReorderGroups,
+  reorderable = Boolean(onReorderGroups),
   isConnected,
   startingLocalPath,
 }: Props) {
@@ -463,6 +468,7 @@ const LocalProjectsSectionImpl = function LocalProjectsSection({
           onHideProject={onHideProject}
           isConnected={isConnected}
           startingLocalPath={startingLocalPath}
+          reorderable={reorderable}
         />
         ))}
       </SortableContext>

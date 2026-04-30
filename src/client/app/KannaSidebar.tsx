@@ -381,6 +381,11 @@ function KannaSidebarImpl({
     return results.slice(0, 30)
   }, [activeMachineProjectGroups, generalProjectGroups, sidebarSearchQuery])
   const activeCodexAssets = codexAssets?.machineId === activeMachineId ? codexAssets : null
+  const latestGeneralChatId = useMemo(() => (
+    generalProjectGroups
+      .flatMap((group) => group.chats)
+      .sort((left, right) => getSidebarChatTimestamp(right) - getSidebarChatTimestamp(left))[0]?.chatId ?? null
+  ), [generalProjectGroups])
 
   const activeVisibleCount = visibleChats.length
   const archivedProject = useMemo(
@@ -446,8 +451,8 @@ function KannaSidebarImpl({
   }, [])
 
   const handleReorderActiveMachineProjectGroups = useCallback((newOrder: string[]) => {
-    const reordered = [...newOrder]
     const activeSet = new Set(activeMachineProjectGroups.map((group) => group.groupKey))
+    const reordered = newOrder.filter((projectId) => activeSet.has(projectId))
     const mergedOrder = data.projectGroups.map((group) => (
       activeSet.has(group.groupKey) ? reordered.shift() ?? group.groupKey : group.groupKey
     ))
@@ -512,6 +517,15 @@ function KannaSidebarImpl({
     onCreateChat(currentProjectId)
     onClose()
   }, [canCreateChatInCurrentProject, currentProjectId, onClose, onCreateChat])
+
+  const handleOpenGeneralChat = useCallback(() => {
+    if (latestGeneralChatId) {
+      navigate(`/chat/${latestGeneralChatId}`)
+    } else {
+      onCreateGeneralChat()
+    }
+    onClose()
+  }, [latestGeneralChatId, navigate, onClose, onCreateGeneralChat])
 
   const renderChatRow = useCallback((chat: SidebarChatRow) => {
     const visibleIndex = visibleIndexByChatId.get(chat.chatId)
@@ -827,39 +841,8 @@ function KannaSidebarImpl({
               <SidebarActionRow
                 icon={MessageCircle}
                 label="General Chat"
-                onClick={() => {
-                  onCreateGeneralChat()
-                  onClose()
-                }}
+                onClick={handleOpenGeneralChat}
               />
-              {generalProjectGroups.map((group) => {
-                const hasMore = group.olderChats.length > 0
-                const isExpanded = expandedGroups.has(group.groupKey)
-                return (
-                  <div key={group.groupKey} className="space-y-[2px] pl-3">
-                    {group.previewChats.map(renderChatRow)}
-                    {hasMore && isExpanded ? (
-                      <button
-                        type="button"
-                        onClick={() => toggleExpandedGroup(group.groupKey)}
-                        className="flex w-full justify-center py-1 text-xs text-muted-foreground/60 transition-colors hover:text-foreground/60"
-                      >
-                        Hide older
-                      </button>
-                    ) : null}
-                    {isExpanded ? group.olderChats.map(renderChatRow) : null}
-                    {hasMore && !isExpanded ? (
-                      <button
-                        type="button"
-                        onClick={() => toggleExpandedGroup(group.groupKey)}
-                        className="flex w-full justify-center py-1 text-xs text-muted-foreground/60 transition-colors hover:text-foreground/60"
-                      >
-                        Show older
-                      </button>
-                    ) : null}
-                  </div>
-                )
-              })}
             </div>
 
             {machines.length > 0 ? (
@@ -934,6 +917,27 @@ function KannaSidebarImpl({
               <p className="px-2 py-3 text-xs text-muted-foreground">
                 No projects on {activeMachine?.displayName ?? "this device"}.
               </p>
+            ) : null}
+
+            {generalProjectGroups.length > 0 ? (
+              <div className="pt-2">
+                <SidebarPanelLabel>General chats</SidebarPanelLabel>
+                <LocalProjectsSection
+                  projectGroups={generalProjectGroups}
+                  editorLabel={editorLabel}
+                  collapsedSections={collapsedSections}
+                  expandedGroups={expandedGroups}
+                  onToggleSection={toggleSection}
+                  onToggleExpandedGroup={toggleExpandedGroup}
+                  renderChatRow={renderChatRow}
+                  onNewLocalChat={() => {
+                    onCreateGeneralChat()
+                    onClose()
+                  }}
+                  isConnected={connectionStatus === "connected"}
+                  reorderable={false}
+                />
+              </div>
             ) : null}
           </div>
         </div>
