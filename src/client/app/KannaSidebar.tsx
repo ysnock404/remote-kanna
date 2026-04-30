@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type ReactNode } from "react"
-import { Eye, Flower, FolderPlus, Loader2, PanelLeft, X, Menu, Plus, RefreshCw, RotateCcw, Settings, MessageCircle, Search, Plug, Sparkles, SquarePen } from "lucide-react"
+import { Eye, Flower, FolderPlus, Loader2, PanelLeft, X, Menu, Plus, RefreshCw, RotateCcw, Settings, Search, Plug, Sparkles, SquarePen } from "lucide-react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { APP_NAME } from "../../shared/branding"
 import { LOCAL_MACHINE_ID } from "../../shared/project-location"
@@ -24,6 +24,7 @@ import {
 } from "./sidebarNumberJump"
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "kanna:sidebar-width"
+const GENERAL_CHATS_SECTION_KEY = "__general_chats__"
 export const DEFAULT_SIDEBAR_WIDTH = 275
 export const MIN_SIDEBAR_WIDTH = 220
 export const MAX_SIDEBAR_WIDTH = 520
@@ -381,11 +382,7 @@ function KannaSidebarImpl({
     return results.slice(0, 30)
   }, [activeMachineProjectGroups, generalProjectGroups, sidebarSearchQuery])
   const activeCodexAssets = codexAssets?.machineId === activeMachineId ? codexAssets : null
-  const latestGeneralChatId = useMemo(() => (
-    generalProjectGroups
-      .flatMap((group) => group.chats)
-      .sort((left, right) => getSidebarChatTimestamp(right) - getSidebarChatTimestamp(left))[0]?.chatId ?? null
-  ), [generalProjectGroups])
+  const generalChatsCollapsed = collapsedSections.has(GENERAL_CHATS_SECTION_KEY)
 
   const activeVisibleCount = visibleChats.length
   const archivedProject = useMemo(
@@ -401,6 +398,7 @@ function KannaSidebarImpl({
     setCollapsedSections((previous) => {
       const next = new Set<string>()
       const projectKeys = new Set(data.projectGroups.map((group) => group.groupKey))
+      projectKeys.add(GENERAL_CHATS_SECTION_KEY)
       const initializedKeys = initializedCollapsedGroupKeysRef.current
 
       for (const key of previous) {
@@ -517,15 +515,6 @@ function KannaSidebarImpl({
     onCreateChat(currentProjectId)
     onClose()
   }, [canCreateChatInCurrentProject, currentProjectId, onClose, onCreateChat])
-
-  const handleOpenGeneralChat = useCallback(() => {
-    if (latestGeneralChatId) {
-      navigate(`/chat/${latestGeneralChatId}`)
-    } else {
-      onCreateGeneralChat()
-    }
-    onClose()
-  }, [latestGeneralChatId, navigate, onClose, onCreateGeneralChat])
 
   const renderChatRow = useCallback((chat: SidebarChatRow) => {
     const visibleIndex = visibleIndexByChatId.get(chat.chatId)
@@ -837,14 +826,6 @@ function KannaSidebarImpl({
               <p className="text-sm text-slate-400 p-2 mt-6 text-center">No conversations yet</p>
             ) : null}
 
-            <div className="space-y-1 pb-2">
-              <SidebarActionRow
-                icon={MessageCircle}
-                label="General Chat"
-                onClick={handleOpenGeneralChat}
-              />
-            </div>
-
             {machines.length > 0 ? (
               <div className="border-y border-border/60 py-2">
                 <MachineSelector
@@ -919,39 +900,66 @@ function KannaSidebarImpl({
               </p>
             ) : null}
 
-            {generalProjectGroups.length > 0 ? (
+            {!isConnecting ? (
               <div className="pt-2">
-                <SidebarPanelLabel>General chats</SidebarPanelLabel>
-                <div className="space-y-[2px]">
-                  {generalProjectGroups.map((group) => {
-                    const hasMore = group.olderChats.length > 0
-                    const isExpanded = expandedGroups.has(group.groupKey)
-                    return (
-                      <div key={group.groupKey} className="space-y-[2px]">
-                        {group.previewChats.map(renderChatRow)}
-                        {hasMore && isExpanded ? (
-                          <button
-                            type="button"
-                            onClick={() => toggleExpandedGroup(group.groupKey)}
-                            className="flex w-full justify-center py-1 text-xs text-muted-foreground/60 transition-colors hover:text-foreground/60"
-                          >
-                            Hide older
-                          </button>
-                        ) : null}
-                        {isExpanded ? group.olderChats.map(renderChatRow) : null}
-                        {hasMore && !isExpanded ? (
-                          <button
-                            type="button"
-                            onClick={() => toggleExpandedGroup(group.groupKey)}
-                            className="flex w-full justify-center py-1 text-xs text-muted-foreground/60 transition-colors hover:text-foreground/60"
-                          >
-                            Show older
-                          </button>
-                        ) : null}
-                      </div>
-                    )
-                  })}
+                <div className="group/general-chats flex items-center justify-between gap-2 rounded-md px-2 pt-3 pb-1 transition-colors hover:bg-muted/40">
+                  <button
+                    type="button"
+                    onClick={() => toggleSection(GENERAL_CHATS_SECTION_KEY)}
+                    className="min-w-0 flex-1 text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70 transition-colors hover:text-muted-foreground"
+                  >
+                    General chats
+                  </button>
+                  <button
+                    type="button"
+                    title="New general chat"
+                    className="flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/general-chats:opacity-100"
+                    onClick={() => {
+                      onCreateGeneralChat()
+                      onClose()
+                    }}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
                 </div>
+                {!generalChatsCollapsed ? (
+                  generalProjectGroups.length > 0 ? (
+                    <div className="space-y-[2px]">
+                      {generalProjectGroups.map((group) => {
+                        const hasMore = group.olderChats.length > 0
+                        const isExpanded = expandedGroups.has(group.groupKey)
+                        return (
+                          <div key={group.groupKey} className="space-y-[2px]">
+                            {group.previewChats.map(renderChatRow)}
+                            {hasMore && isExpanded ? (
+                              <button
+                                type="button"
+                                onClick={() => toggleExpandedGroup(group.groupKey)}
+                                className="flex w-full justify-center py-1 text-xs text-muted-foreground/60 transition-colors hover:text-foreground/60"
+                              >
+                                Hide older
+                              </button>
+                            ) : null}
+                            {isExpanded ? group.olderChats.map(renderChatRow) : null}
+                            {hasMore && !isExpanded ? (
+                              <button
+                                type="button"
+                                onClick={() => toggleExpandedGroup(group.groupKey)}
+                                className="flex w-full justify-center py-1 text-xs text-muted-foreground/60 transition-colors hover:text-foreground/60"
+                              >
+                                Show older
+                              </button>
+                            ) : null}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <p className="px-2 py-2 text-xs text-muted-foreground">
+                      No general chats yet.
+                    </p>
+                  )
+                ) : null}
               </div>
             ) : null}
           </div>
