@@ -65,6 +65,8 @@ export type ClientCommand =
   | { type: "sidebar.reorderProjectGroups"; projectIds: string[] }
   | { type: "project.readDiffPatch"; projectId: string; path: string }
   | { type: "system.ping" }
+  | { type: "ssh.ensureKey" }
+  | { type: "machines.refresh" }
   | { type: "update.check"; force?: boolean }
   | { type: "update.install" }
   | { type: "settings.readKeybindings" }

@@ -4,7 +4,7 @@ import { LOCAL_MACHINE_ID } from "../../shared/project-location"
 import type { MachineId, MachineSummary } from "../../shared/types"
 import { cn } from "../lib/utils"
 import { Button } from "./ui/button"
-import { Dialog, DialogBody, DialogContent, DialogTitle } from "./ui/dialog"
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog"
 import { Input } from "./ui/input"
 
 interface MachineSelectorProps {
@@ -29,6 +29,38 @@ function getMachineIcon(machine: MachineSummary) {
 function getFallbackLabel(machine: MachineSummary) {
   if (machine.id === LOCAL_MACHINE_ID) return "This machine"
   return machine.sshTarget ?? machine.id
+}
+
+function getMachineConnectionStatus(machine: MachineSummary): NonNullable<MachineSummary["connectionStatus"]> {
+  if (machine.enabled === false) return "disconnected"
+  return machine.connectionStatus ?? "connected"
+}
+
+function getMachineConnectionLabel(machine: MachineSummary) {
+  const status = getMachineConnectionStatus(machine)
+  if (status === "connected") return "Connected"
+  if (status === "disconnected") return "Disconnected"
+  if (status === "connecting") return "Connecting"
+  return "Connection problem"
+}
+
+function MachineStatusDot({ machine, className }: { machine: MachineSummary; className?: string }) {
+  const status = getMachineConnectionStatus(machine)
+  const label = getMachineConnectionLabel(machine)
+
+  return (
+    <span
+      aria-label={label}
+      title={machine.connectionStatusMessage ? `${label}: ${machine.connectionStatusMessage}` : label}
+      className={cn(
+        "inline-block h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-background",
+        status === "connected" && "bg-emerald-500",
+        status === "disconnected" && "bg-zinc-500",
+        (status === "connecting" || status === "problem") && "bg-amber-500",
+        className
+      )}
+    />
+  )
 }
 
 export function MachineSelector({
@@ -86,6 +118,7 @@ export function MachineSelector({
         )}
       >
         <SelectedIcon className={cn("shrink-0 text-muted-foreground", compact ? "h-3.5 w-3.5" : "h-6 w-6")} />
+        <MachineStatusDot machine={selectedMachine} className={compact ? "h-2 w-2" : undefined} />
         <span className="min-w-0 truncate text-foreground">{selectedMachine.displayName}</span>
       </button>
 
@@ -93,6 +126,9 @@ export function MachineSelector({
         <DialogContent size="lg">
           <DialogBody className="space-y-4">
             <DialogTitle>Machines</DialogTitle>
+            <DialogDescription>
+              Select the active device for sidebar actions and projects.
+            </DialogDescription>
             <div className="space-y-2">
               {machines.map((machine) => {
                 const Icon = getMachineIcon(machine)
@@ -135,13 +171,16 @@ export function MachineSelector({
                         }}
                         className="flex min-w-0 items-center gap-3 text-left disabled:opacity-50"
                       >
-                        <Icon className="h-5 w-5 shrink-0 text-muted-foreground" />
+                        <span className="relative shrink-0">
+                          <Icon className="h-5 w-5 text-muted-foreground" />
+                          <MachineStatusDot machine={machine} className="absolute -bottom-0.5 -right-1" />
+                        </span>
                         <span className="min-w-0">
                           <>
                             <span className="block truncate text-sm font-medium text-foreground">{machine.displayName}</span>
                             <span className="block truncate text-xs text-muted-foreground">
                               {projectCount} project{projectCount === 1 ? "" : "s"} indexed
-                              {machine.enabled === false ? " · disabled" : ""}
+                              {" · "}{getMachineConnectionLabel(machine).toLowerCase()}
                             </span>
                           </>
                         </span>

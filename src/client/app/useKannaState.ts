@@ -1969,10 +1969,17 @@ export function useKannaState(activeChatId: string | null): KannaState {
         machineId,
         localPath,
       })
+      setCommandError(null)
     } catch (error) {
-      setCommandError(error instanceof Error ? error.message : String(error))
+      const message = error instanceof Error ? error.message : String(error)
+      setCommandError(message)
+      await dialog.alert({
+        title: "Open failed",
+        description: `${message}\n\n${localPath}`,
+        closeLabel: "Close",
+      })
     }
-  }, [openExternal])
+  }, [dialog, openExternal])
 
   const handleExportStandalone = useCallback(async (chatId: string | null | undefined = activeChatId) => {
     if (!chatId || isExportingStandalone) {

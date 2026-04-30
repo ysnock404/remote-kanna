@@ -12,7 +12,7 @@ import type {
   SidebarProjectGroup,
 } from "../shared/types"
 import { getMachineLabel, getProjectLocationKey, LOCAL_MACHINE_ID, normalizeMachineId } from "../shared/project-location"
-import { getRemoteMachineSummaries } from "./remote-hosts"
+import { getRemoteMachineSummaries, type RemoteMachineConnectionSnapshots } from "./remote-hosts"
 import type { ChatRecord, StoreState } from "./events"
 import { resolveLocalPath } from "./paths"
 import { SERVER_PROVIDERS } from "./provider-catalog"
@@ -158,7 +158,8 @@ export function deriveLocalProjectsSnapshot(
   discoveredProjects: Array<{ machineId?: MachineId; localPath: string; title: string; modifiedAt: number }>,
   machineName: string,
   remoteHosts: RemoteHostConfig[] = [],
-  machineAliases: MachineAliases = {}
+  machineAliases: MachineAliases = {},
+  remoteMachineConnectionSnapshots: RemoteMachineConnectionSnapshots = {},
 ): LocalProjectsSnapshot {
   const projects = new Map<string, LocalProjectsSnapshot["projects"][number]>()
 
@@ -207,8 +208,9 @@ export function deriveLocalProjectsSnapshot(
         displayName: getMachineLabel(LOCAL_MACHINE_ID, remoteHosts, machineName, machineAliases),
         platform: process.platform,
         enabled: true,
+        connectionStatus: "connected",
       },
-      ...getRemoteMachineSummaries(remoteHosts, machineAliases),
+      ...getRemoteMachineSummaries(remoteHosts, machineAliases, remoteMachineConnectionSnapshots),
     ],
     projects: [...projects.values()].sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0)),
   }

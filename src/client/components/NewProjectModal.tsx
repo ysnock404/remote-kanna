@@ -6,6 +6,7 @@ import { Button } from "./ui/button"
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogBody,
   DialogTitle,
   DialogFooter,
@@ -114,6 +115,9 @@ export function NewProjectModal({
       <DialogContent size="sm">
         <DialogBody className="space-y-4">
           <DialogTitle>Add Project</DialogTitle>
+          <DialogDescription>
+            Create a project folder or open an existing path on {machineLabel}.
+          </DialogDescription>
 
           <SegmentedControl
             value={tab}

@@ -364,6 +364,14 @@ export interface CodexAssetsSnapshot {
   warnings?: string[]
 }
 
+export interface SshPublicKeySnapshot {
+  publicKey: string
+  publicKeyPath: string
+  privateKeyPath: string
+  generated: boolean
+  fingerprint: string | null
+}
+
 export interface SidebarChatRow {
   _id: string
   _creationTime: number
@@ -415,6 +423,8 @@ export interface MachineSummary {
   platform?: NodeJS.Platform | "remote"
   sshTarget?: string
   enabled?: boolean
+  connectionStatus?: "connected" | "disconnected" | "connecting" | "problem"
+  connectionStatusMessage?: string
 }
 
 export interface DirectoryBrowserEntry {

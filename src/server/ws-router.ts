@@ -16,7 +16,8 @@ import { openExternal, openExternalOnRemote } from "./external-open"
 import { KeybindingsManager } from "./keybindings"
 import { ensureProjectDirectory, resolveLocalPath } from "./paths"
 import { getProjectLocationKey, LOCAL_MACHINE_ID, normalizeMachineId } from "../shared/project-location"
-import { ensureRemoteProjectDirectory, remotePathExpression, resolveProjectRuntime, runSsh, shellQuote, verifyRemoteProjectDirectory } from "./remote-hosts"
+import { ensureRemoteProjectDirectory, remotePathExpression, resolveProjectRuntime, runSsh, shellQuote, verifyRemoteProjectDirectory, type RemoteMachineConnectionSnapshots } from "./remote-hosts"
+import { ensureServerSshPublicKey } from "./ssh-keys"
 import { writeStandaloneTranscriptExport } from "./standalone-export"
 import { TerminalManager } from "./terminal-manager"
 import type { UpdateManager } from "./update-manager"
@@ -495,6 +496,7 @@ interface CreateWsRouterArgs {
   }
   refreshDiscovery: () => Promise<DiscoveredProject[]>
   getDiscoveredProjects: () => DiscoveredProject[]
+  getRemoteMachineConnectionSnapshots?: () => RemoteMachineConnectionSnapshots
   machineDisplayName: string
   updateManager: UpdateManager | null
 }
@@ -548,6 +550,7 @@ export function createWsRouter({
   llmProvider,
   refreshDiscovery,
   getDiscoveredProjects,
+  getRemoteMachineConnectionSnapshots,
   machineDisplayName,
   updateManager,
 }: CreateWsRouterArgs) {
@@ -847,7 +850,8 @@ export function createWsRouter({
         discoveredProjects,
         machineDisplayName,
         settings.remoteHosts ?? [],
-        settings.machineAliases ?? {}
+        settings.machineAliases ?? {},
+        getRemoteMachineConnectionSnapshots?.() ?? {},
       )
 
       return {
@@ -1232,6 +1236,16 @@ export function createWsRouter({
       switch (command.type) {
         case "system.ping": {
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id })
+          return
+        }
+        case "ssh.ensureKey": {
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result: await ensureServerSshPublicKey() })
+          return
+        }
+        case "machines.refresh": {
+          await refreshDiscovery()
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id })
+          await broadcastFilteredSnapshots({ includeLocalProjects: true, includeSidebar: true })
           return
         }
         case "filesystem.listDirectories": {

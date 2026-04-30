@@ -11,7 +11,7 @@ import type {
   TranscriptEntry,
 } from "../shared/types"
 import type { HarnessEvent, HarnessToolRequest, HarnessTurn } from "./harness-types"
-import { getRemoteCodexAppServerCommand, type ProjectRuntime } from "./remote-hosts"
+import { getRemoteCodexAppServerCommand, getServerSshClientArgs, type ProjectRuntime } from "./remote-hosts"
 import {
   type CollabAgentToolCallItem,
   type ContextCompactedNotification,
@@ -748,10 +748,7 @@ export class CodexAppServerManager {
     this.spawnProcess = args.spawnProcess ?? ((cwd, runtime) => {
       if (runtime.kind === "ssh") {
         return spawn("ssh", [
-          "-o",
-          "BatchMode=yes",
-          "-o",
-          "ConnectTimeout=5",
+          ...getServerSshClientArgs(),
           runtime.host.sshTarget,
           getRemoteCodexAppServerCommand(cwd),
         ], {

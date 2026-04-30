@@ -14,7 +14,7 @@ import { discoverProjects, type DiscoveredProject } from "./discovery"
 import { KeybindingsManager } from "./keybindings"
 import { readLlmProviderSnapshot, validateLlmProviderCredentials, writeLlmProviderSnapshot } from "./llm-provider"
 import { getMachineDisplayName } from "./machine-name"
-import { discoverRemoteProjects, resolveProjectRuntime } from "./remote-hosts"
+import { discoverRemoteProjectsWithStatus, resolveProjectRuntime, type RemoteMachineConnectionSnapshots } from "./remote-hosts"
 import { TerminalManager } from "./terminal-manager"
 import { UpdateManager } from "./update-manager"
 import type { UpdateInstallAttemptResult } from "./cli-runtime"
@@ -114,13 +114,15 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
   await diffStore.initialize()
   await store.migrateLegacyTranscripts(options.onMigrationProgress)
   let discoveredProjects: DiscoveredProject[] = []
+  let remoteMachineConnectionSnapshots: RemoteMachineConnectionSnapshots = {}
   const appSettings = new AppSettingsManager(path.join(store.dataDir, "settings.json"))
   await appSettings.initialize()
 
   async function refreshDiscovery() {
     const localProjects = discoverProjects()
-    const remoteProjects = await discoverRemoteProjects(appSettings.getSnapshot().remoteHosts ?? [])
-    discoveredProjects = [...localProjects, ...remoteProjects]
+    const remoteDiscovery = await discoverRemoteProjectsWithStatus(appSettings.getSnapshot().remoteHosts ?? [])
+    remoteMachineConnectionSnapshots = remoteDiscovery.connectionSnapshots
+    discoveredProjects = [...localProjects, ...remoteDiscovery.projects]
     return discoveredProjects
   }
 
@@ -176,6 +178,7 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
     },
     refreshDiscovery,
     getDiscoveredProjects: () => discoveredProjects,
+    getRemoteMachineConnectionSnapshots: () => remoteMachineConnectionSnapshots,
     machineDisplayName,
     updateManager,
   })

@@ -3,22 +3,27 @@ import {
   BookText,
   Command,
   Code,
+  Copy,
   Info,
+  KeyRound,
   Loader2,
   Menu,
   Monitor,
   Moon,
   MessageSquareQuote,
+  Plus,
+  RefreshCw,
   Settings2,
   Sun,
   DownloadCloud,
   LogOut,
+  Trash2,
 } from "lucide-react"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { useNavigate, useOutletContext, useParams } from "react-router-dom"
 import { APP_NAME, getKeybindingsFilePathDisplay, SDK_CLIENT_APP } from "../../shared/branding"
-import { LOCAL_MACHINE_ID } from "../../shared/project-location"
+import { LOCAL_MACHINE_ID, toRemoteMachineId } from "../../shared/project-location"
 import {
   DEFAULT_KEYBINDINGS,
   DEFAULT_OPENAI_SDK_MODEL,
@@ -27,7 +32,10 @@ import {
   type AgentProvider,
   type KeybindingAction,
   type LlmProviderKind,
+  type MachineSummary,
   type MachineId,
+  type RemoteHostConfig,
+  type SshPublicKeySnapshot,
   type UpdateSnapshot,
 } from "../../shared/types"
 import { markdownComponents } from "../components/messages/shared"
@@ -35,9 +43,10 @@ import { ChatPreferenceControls } from "../components/chat-ui/ChatPreferenceCont
 import { EDITOR_OPTIONS, EditorIcon } from "../components/editor-icons"
 import { MachineSelector } from "../components/MachineSelector"
 import { Button, buttonVariants } from "../components/ui/button"
-import { Dialog, DialogBody, DialogContent, DialogFooter, DialogTitle } from "../components/ui/dialog"
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "../components/ui/dialog"
 import { Input } from "../components/ui/input"
 import { SettingsHeaderButton } from "../components/ui/settings-header-button"
+import { Textarea } from "../components/ui/textarea"
 import type { EditorPreset } from "../../shared/protocol"
 import { SegmentedControl } from "../components/ui/segmented-control"
 import {
@@ -51,6 +60,7 @@ import {
 import { useTheme, type ThemePreference } from "../hooks/useTheme"
 import { KEYBINDING_ACTION_LABELS, formatKeybindingInput, getResolvedKeybindings, parseKeybindingInput } from "../lib/keybindings"
 import { playChatNotificationSound } from "../lib/chatSounds"
+import { copyTextToClipboard } from "../lib/clipboard"
 import { cn } from "../lib/utils"
 import {
   DEFAULT_TERMINAL_MIN_COLUMN_WIDTH,
@@ -144,6 +154,16 @@ type FetchReleases = (input: string, init?: RequestInit) => Promise<Response>
 let changelogCache: ChangelogCache | null = null
 const KEYBINDING_ACTIONS = Object.keys(KEYBINDING_ACTION_LABELS) as KeybindingAction[]
 
+type SshHostDraft = {
+  id: string
+  label: string
+  sshTarget: string
+  projectRootsText: string
+  enabled: boolean
+  codexEnabled: boolean
+  claudeEnabled: boolean
+}
+
 export function getKeybindingsSubtitle(filePathDisplay: string) {
   return `Edit global app shortcuts stored in ${filePathDisplay}.`
 }
@@ -178,6 +198,102 @@ export function setCachedChangelog(releases: GithubRelease[]) {
     releases,
     expiresAt: Date.now() + CHANGELOG_CACHE_TTL_MS,
   }
+}
+
+export function formatEditableAppSettingsJson(settings: KannaState["appSettings"]) {
+  if (!settings) return "{}"
+  const {
+    warning: _warning,
+    filePathDisplay: _filePathDisplay,
+    ...editableSettings
+  } = settings
+  return `${JSON.stringify(editableSettings, null, 2)}\n`
+}
+
+export function parseEditableAppSettingsJson(text: string) {
+  const parsed = JSON.parse(text) as unknown
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Settings JSON must be an object.")
+  }
+  return parsed
+}
+
+function normalizeRemoteHostId(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+}
+
+function createSshHostDraft(host?: RemoteHostConfig): SshHostDraft {
+  return {
+    id: host?.id ?? "",
+    label: host?.label ?? "",
+    sshTarget: host?.sshTarget ?? "",
+    projectRootsText: host?.projectRoots.join("\n") ?? "",
+    enabled: host?.enabled ?? true,
+    codexEnabled: host?.codexEnabled ?? true,
+    claudeEnabled: host?.claudeEnabled ?? true,
+  }
+}
+
+function getMachineStatusLabel(status: NonNullable<MachineSummary["connectionStatus"]>) {
+  if (status === "connected") return "Connected"
+  if (status === "disconnected") return "Disconnected"
+  if (status === "connecting") return "Connecting"
+  return "Problem"
+}
+
+function getMachineStatusClass(status: NonNullable<MachineSummary["connectionStatus"]>) {
+  if (status === "connected") return "bg-emerald-500"
+  if (status === "disconnected") return "bg-zinc-500"
+  return "bg-amber-500"
+}
+
+function parseProjectRootsText(value: string) {
+  return value
+    .split(/\r?\n|,/)
+    .map((root) => root.trim())
+    .filter(Boolean)
+}
+
+export function buildRemoteHostsFromDrafts(drafts: SshHostDraft[]): RemoteHostConfig[] {
+  const hosts: RemoteHostConfig[] = []
+  const seenIds = new Set<string>()
+
+  for (const [index, draft] of drafts.entries()) {
+    const label = draft.label.trim()
+    const sshTarget = draft.sshTarget.trim()
+    const projectRoots = parseProjectRootsText(draft.projectRootsText)
+    const isEmpty = !label && !sshTarget && projectRoots.length === 0
+    if (isEmpty) continue
+    if (!sshTarget) {
+      throw new Error(`SSH host ${index + 1} needs an SSH target.`)
+    }
+
+    const id = normalizeRemoteHostId(draft.id || label || sshTarget)
+    if (!id) {
+      throw new Error(`SSH host ${index + 1} needs a valid name or SSH target.`)
+    }
+    if (seenIds.has(id)) {
+      throw new Error(`Duplicate SSH host id: ${id}`)
+    }
+    seenIds.add(id)
+
+    hosts.push({
+      id,
+      label: label || sshTarget,
+      sshTarget,
+      enabled: draft.enabled,
+      projectRoots,
+      codexEnabled: draft.codexEnabled,
+      claudeEnabled: draft.claudeEnabled,
+    })
+  }
+
+  return hosts
 }
 
 export async function loadChangelog(options?: { force?: boolean; fetchImpl?: FetchReleases }) {
@@ -447,6 +563,7 @@ export function SettingsPage() {
   const machineName = state.localProjects?.machine.displayName ?? "Unavailable"
   const projectCount = state.localProjects?.projects.length ?? 0
   const machines = state.localProjects?.machines ?? []
+  const machinesById = useMemo(() => new Map(machines.map((machine) => [machine.id, machine])), [machines])
   const projectCounts = useMemo(() => {
     const counts = new Map<MachineId, number>()
     for (const project of state.localProjects?.projects ?? []) {
@@ -487,6 +604,18 @@ export function SettingsPage() {
   const [keybindingDrafts, setKeybindingDrafts] = useState<Record<string, string>>({})
   const [keybindingsError, setKeybindingsError] = useState<string | null>(null)
   const [appSettingsError, setAppSettingsError] = useState<string | null>(null)
+  const [settingsJsonDialogOpen, setSettingsJsonDialogOpen] = useState(false)
+  const [settingsJsonDraft, setSettingsJsonDraft] = useState("")
+  const [settingsJsonError, setSettingsJsonError] = useState<string | null>(null)
+  const [sshSettingsDialogOpen, setSshSettingsDialogOpen] = useState(false)
+  const [sshHostDrafts, setSshHostDrafts] = useState<SshHostDraft[]>([])
+  const [sshSettingsError, setSshSettingsError] = useState<string | null>(null)
+  const [sshPublicKey, setSshPublicKey] = useState<SshPublicKeySnapshot | null>(null)
+  const [sshPublicKeyLoading, setSshPublicKeyLoading] = useState(false)
+  const [sshPublicKeyError, setSshPublicKeyError] = useState<string | null>(null)
+  const [sshPublicKeyCopied, setSshPublicKeyCopied] = useState(false)
+  const [sshRefreshing, setSshRefreshing] = useState(false)
+  const [sshRefreshMessage, setSshRefreshMessage] = useState<string | null>(null)
   const [llmProviderDraft, setLlmProviderDraft] = useState({
     provider: "openai" as LlmProviderKind,
     apiKey: "",
@@ -809,6 +938,103 @@ export function SettingsPage() {
         setChangelogError(error instanceof Error ? error.message : "Unable to load changelog.")
         setChangelogStatus("error")
       })
+  }
+
+  function openSettingsJsonDialog() {
+    setSettingsJsonDraft(formatEditableAppSettingsJson(appSettings))
+    setSettingsJsonError(null)
+    setSettingsJsonDialogOpen(true)
+  }
+
+  async function saveSettingsJsonDialog() {
+    try {
+      setSettingsJsonError(null)
+      const patch = parseEditableAppSettingsJson(settingsJsonDraft)
+      await handleWriteAppSettings(patch)
+      setSettingsJsonDialogOpen(false)
+    } catch (error) {
+      setSettingsJsonError(error instanceof Error ? error.message : "Unable to save settings JSON.")
+    }
+  }
+
+  function openSshSettingsDialog() {
+    setSshHostDrafts(remoteHosts.length > 0
+      ? remoteHosts.map((host) => createSshHostDraft(host))
+      : [createSshHostDraft()]
+    )
+    setSshSettingsError(null)
+    setSshRefreshMessage(null)
+    setSshSettingsDialogOpen(true)
+    void loadServerSshPublicKey()
+  }
+
+  async function loadServerSshPublicKey() {
+    setSshPublicKeyLoading(true)
+    setSshPublicKeyError(null)
+    setSshPublicKeyCopied(false)
+    try {
+      const snapshot = await state.socket.command<SshPublicKeySnapshot>({ type: "ssh.ensureKey" })
+      setSshPublicKey(snapshot)
+    } catch (error) {
+      setSshPublicKeyError(error instanceof Error ? error.message : "Unable to load SSH public key.")
+    } finally {
+      setSshPublicKeyLoading(false)
+    }
+  }
+
+  async function copyServerSshPublicKey() {
+    if (!sshPublicKey?.publicKey) return
+    try {
+      await copyTextToClipboard(sshPublicKey.publicKey)
+      setSshPublicKeyCopied(true)
+      window.setTimeout(() => setSshPublicKeyCopied(false), 2_000)
+    } catch (error) {
+      setSshPublicKeyError(error instanceof Error ? error.message : "Unable to copy SSH public key.")
+    }
+  }
+
+  function updateSshHostDraft(index: number, patch: Partial<SshHostDraft>) {
+    setSshHostDrafts((current) => current.map((draft, draftIndex) => (
+      draftIndex === index ? { ...draft, ...patch } : draft
+    )))
+  }
+
+  function addSshHostDraft() {
+    setSshHostDrafts((current) => [...current, createSshHostDraft()])
+  }
+
+  function removeSshHostDraft(index: number) {
+    setSshHostDrafts((current) => {
+      const next = current.filter((_draft, draftIndex) => draftIndex !== index)
+      return next.length > 0 ? next : [createSshHostDraft()]
+    })
+  }
+
+  async function saveSshSettingsDialog() {
+    try {
+      setSshSettingsError(null)
+      const nextRemoteHosts = buildRemoteHostsFromDrafts(sshHostDrafts)
+      await handleWriteAppSettings({ remoteHosts: nextRemoteHosts })
+      setSshSettingsDialogOpen(false)
+    } catch (error) {
+      setSshSettingsError(error instanceof Error ? error.message : "Unable to save SSH settings.")
+    }
+  }
+
+  async function refreshSshConnections() {
+    setSshRefreshing(true)
+    setSshSettingsError(null)
+    setSshRefreshMessage(null)
+    try {
+      const nextRemoteHosts = buildRemoteHostsFromDrafts(sshHostDrafts)
+      await handleWriteAppSettings({ remoteHosts: nextRemoteHosts })
+      await state.socket.command({ type: "machines.refresh" })
+      setSshRefreshMessage("Connection check refreshed.")
+    } catch (error) {
+      setSshSettingsError(error instanceof Error ? error.message : "Unable to refresh SSH connections.")
+    } finally {
+      setSshRefreshing(false)
+    }
   }
 
   const customEditorPreview = editorCommandDraft
@@ -1155,7 +1381,7 @@ export function SettingsPage() {
                         title="Remote Machines"
                         description={remoteHosts.length > 0
                           ? `${remoteHosts.length} SSH host${remoteHosts.length === 1 ? "" : "s"} configured for remote projects.`
-                          : `Add SSH hosts in ${appSettings?.filePathDisplay ?? "~/.kanna/data/settings.json"}.`}
+                          : "Add SSH hosts for remote projects and agent access."}
                         alignStart
                       >
                         <div className="flex min-w-0 max-w-[420px] flex-col items-stretch gap-2 md:items-end">
@@ -1174,12 +1400,9 @@ export function SettingsPage() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => {
-                              void state.handleOpenExternalPath("open_editor", appSettings?.filePathDisplay ?? "~/.kanna/data/settings.json")
-                            }}
+                            onClick={openSshSettingsDialog}
                           >
-                            <Code className="h-4 w-4 mr-1.5" />
-                            Open Settings
+                            Configure SSH
                           </Button>
                         </div>
                       </SettingsRow>
@@ -1228,6 +1451,20 @@ export function SettingsPage() {
                             {minColumnWidth === DEFAULT_TERMINAL_MIN_COLUMN_WIDTH ? " (default)" : ""}
                           </div>
                         </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="Advanced Settings"
+                        description={`Edit the raw settings JSON stored at ${appSettings?.filePathDisplay ?? "~/.kanna/data/settings.json"}.`}
+                      >
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={openSettingsJsonDialog}
+                        >
+                          <Code className="h-4 w-4 mr-1.5" />
+                          Edit JSON
+                        </Button>
                       </SettingsRow>
 
                       {appSettings?.warning ? (
@@ -1527,6 +1764,9 @@ export function SettingsPage() {
         <DialogContent size="lg">
           <DialogBody className="space-y-4">
             <DialogTitle>Validation Error</DialogTitle>
+            <DialogDescription>
+              Review the provider validation response before saving.
+            </DialogDescription>
             <pre className="max-h-[60vh] overflow-auto rounded-lg border border-border bg-muted p-3 text-xs font-mono whitespace-pre-wrap break-words">
               {llmValidationErrorText}
             </pre>
@@ -1534,6 +1774,243 @@ export function SettingsPage() {
           <DialogFooter>
             <Button variant="secondary" size="sm" onClick={() => setLlmValidationDialogOpen(false)}>
               Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={sshSettingsDialogOpen} onOpenChange={setSshSettingsDialogOpen}>
+        <DialogContent size="lg" className="max-w-3xl">
+          <DialogBody className="space-y-4">
+            <DialogTitle>Configure SSH Machines</DialogTitle>
+            <DialogDescription>
+              Add machines reachable over SSH. Use targets like ysnock@100.84.223.44 and one project root per line.
+            </DialogDescription>
+            {sshSettingsError ? (
+              <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                {sshSettingsError}
+              </div>
+            ) : null}
+            <div className="space-y-3 rounded-lg border border-border bg-card/30 p-3">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    <KeyRound className="h-4 w-4 text-muted-foreground" />
+                    <span>Server SSH Public Key</span>
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Add this key to each remote machine's authorized_keys file. The private key stays on this server.
+                  </div>
+                  {sshPublicKey?.fingerprint ? (
+                    <div className="mt-2 truncate font-mono text-[11px] text-muted-foreground/80">
+                      {sshPublicKey.fingerprint}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void loadServerSshPublicKey()}
+                    disabled={sshPublicKeyLoading}
+                  >
+                    {sshPublicKeyLoading ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
+                    {sshPublicKey ? "Refresh Key" : "Get Key"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void copyServerSshPublicKey()}
+                    disabled={!sshPublicKey?.publicKey}
+                  >
+                    <Copy className="mr-1.5 h-4 w-4" />
+                    {sshPublicKeyCopied ? "Copied" : "Copy Key"}
+                  </Button>
+                </div>
+              </div>
+              {sshPublicKeyError ? (
+                <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                  {sshPublicKeyError}
+                </div>
+              ) : null}
+              {sshPublicKey?.publicKey ? (
+                <Textarea
+                  value={sshPublicKey.publicKey}
+                  readOnly
+                  spellCheck={false}
+                  className="min-h-20 resize-none font-mono text-xs"
+                />
+              ) : null}
+            </div>
+            <div className="space-y-3">
+              {sshHostDrafts.map((host, index) => {
+                const hostId = normalizeRemoteHostId(host.id || host.label || host.sshTarget)
+                const machine = hostId ? machinesById.get(toRemoteMachineId(hostId)) : null
+                const status = host.enabled === false
+                  ? "disconnected"
+                  : machine?.connectionStatus ?? "connecting"
+                return (
+                  <div key={`${host.id || "new"}-${index}`} className="space-y-3 rounded-lg border border-border bg-card/30 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <div className="text-sm font-medium text-foreground">
+                          SSH Host {index + 1}
+                        </div>
+                        <span
+                          title={machine?.connectionStatusMessage ?? getMachineStatusLabel(status)}
+                          className="inline-flex max-w-[240px] items-center gap-1.5 rounded-full border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground"
+                        >
+                          <span className={cn("h-2 w-2 rounded-full", getMachineStatusClass(status))} />
+                          <span className="truncate">{getMachineStatusLabel(status)}</span>
+                        </span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        title="Remove SSH host"
+                        onClick={() => removeSshHostDraft(index)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
+                        <span>Display Name</span>
+                        <Input
+                          value={host.label}
+                          onChange={(event) => updateSshHostDraft(index, { label: event.target.value })}
+                          placeholder="Desktop-Pc"
+                        />
+                      </label>
+                      <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
+                        <span>SSH Target</span>
+                        <Input
+                          value={host.sshTarget}
+                          onChange={(event) => updateSshHostDraft(index, { sshTarget: event.target.value })}
+                          placeholder="ysnock@100.84.223.44"
+                          className="font-mono"
+                        />
+                      </label>
+                    </div>
+                    <label className="block space-y-1.5 text-xs font-medium text-muted-foreground">
+                      <span>Project Roots</span>
+                      <Textarea
+                        value={host.projectRootsText}
+                        onChange={(event) => updateSshHostDraft(index, { projectRootsText: event.target.value })}
+                        placeholder={"~/Projects\n~/Code"}
+                        spellCheck={false}
+                        className="min-h-20 resize-none font-mono text-xs"
+                      />
+                    </label>
+                    {machine?.connectionStatusMessage ? (
+                      <div className="rounded-md border border-border bg-background px-2.5 py-2 text-xs text-muted-foreground">
+                        {machine.connectionStatusMessage}
+                      </div>
+                    ) : null}
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={host.enabled}
+                          onChange={(event) => updateSshHostDraft(index, { enabled: event.target.checked })}
+                          className="h-4 w-4 rounded border-border"
+                        />
+                        Enabled
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={host.codexEnabled}
+                          onChange={(event) => updateSshHostDraft(index, { codexEnabled: event.target.checked })}
+                          className="h-4 w-4 rounded border-border"
+                        />
+                        Codex
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={host.claudeEnabled}
+                          onChange={(event) => updateSshHostDraft(index, { claudeEnabled: event.target.checked })}
+                          className="h-4 w-4 rounded border-border"
+                        />
+                        Claude
+                      </label>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            {sshRefreshMessage ? (
+              <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-sm text-emerald-600 dark:text-emerald-400">
+                {sshRefreshMessage}
+              </div>
+            ) : null}
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={addSshHostDraft}
+              >
+                <Plus className="mr-1.5 h-4 w-4" />
+                Add SSH Host
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void refreshSshConnections()}
+                disabled={sshRefreshing}
+              >
+                {sshRefreshing ? (
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-1.5 h-4 w-4" />
+                )}
+                Refresh Connections
+              </Button>
+            </div>
+          </DialogBody>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setSshSettingsDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button onClick={() => void saveSshSettingsDialog()}>
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={settingsJsonDialogOpen} onOpenChange={setSettingsJsonDialogOpen}>
+        <DialogContent size="lg" className="max-w-3xl">
+          <DialogBody className="space-y-4">
+            <DialogTitle>Edit Settings JSON</DialogTitle>
+            <DialogDescription>
+              Stored on this server at {appSettings?.filePathDisplay ?? "~/.kanna/data/settings.json"}.
+            </DialogDescription>
+            {settingsJsonError ? (
+              <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                {settingsJsonError}
+              </div>
+            ) : null}
+            <Textarea
+              value={settingsJsonDraft}
+              onChange={(event) => setSettingsJsonDraft(event.target.value)}
+              spellCheck={false}
+              className="min-h-[52vh] resize-none font-mono text-xs leading-5"
+            />
+          </DialogBody>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setSettingsJsonDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button onClick={() => void saveSettingsJsonDialog()}>
+              Save
             </Button>
           </DialogFooter>
         </DialogContent>

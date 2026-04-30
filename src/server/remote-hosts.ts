@@ -1,7 +1,9 @@
+import { existsSync } from "node:fs"
 import path from "node:path"
-import type { MachineAliases, MachineId, RemoteHostConfig } from "../shared/types"
+import type { MachineAliases, MachineId, MachineSummary, RemoteHostConfig } from "../shared/types"
 import { LOCAL_MACHINE_ID, remoteHostIdFromMachineId, toRemoteMachineId } from "../shared/project-location"
 import type { DiscoveredProject } from "./discovery"
+import { ensureServerSshPublicKey, getLegacyServerSshPrivateKeyPath, getServerSshPrivateKeyPath } from "./ssh-keys"
 
 export type ProjectRuntime =
   | { kind: "local" }
@@ -20,6 +22,21 @@ interface RemoteDiscoveryRow {
 }
 
 const DEFAULT_SSH_TIMEOUT_MS = 10_000
+
+export function getServerSshClientArgs() {
+  const legacyPrivateKeyPath = getLegacyServerSshPrivateKeyPath()
+  return [
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "ConnectTimeout=5",
+    "-o",
+    "IdentitiesOnly=yes",
+    "-i",
+    getServerSshPrivateKeyPath(),
+    ...(existsSync(legacyPrivateKeyPath) ? ["-i", legacyPrivateKeyPath] : []),
+  ]
+}
 
 export function shellQuote(value: string) {
   return `'${value.replaceAll("'", "'\\''")}'`
@@ -40,15 +57,31 @@ function assertRemotePath(localPath: string) {
   return trimmed
 }
 
-export function getRemoteMachineSummaries(remoteHosts: RemoteHostConfig[], aliases: MachineAliases = {}) {
+export type RemoteMachineConnectionStatus = NonNullable<MachineSummary["connectionStatus"]>
+
+export interface RemoteMachineConnectionSnapshot {
+  status: RemoteMachineConnectionStatus
+  message?: string
+}
+
+export type RemoteMachineConnectionSnapshots = Partial<Record<MachineId, RemoteMachineConnectionSnapshot>>
+
+export function getRemoteMachineSummaries(
+  remoteHosts: RemoteHostConfig[],
+  aliases: MachineAliases = {},
+  connectionSnapshots: RemoteMachineConnectionSnapshots = {},
+) {
   return remoteHosts.map((host) => {
     const machineId = toRemoteMachineId(host.id)
+    const connectionSnapshot = connectionSnapshots[machineId]
     return {
       id: machineId,
       displayName: aliases[machineId]?.trim() || host.label,
       platform: "remote" as const,
       sshTarget: host.sshTarget,
       enabled: host.enabled,
+      connectionStatus: connectionSnapshot?.status ?? (host.enabled ? "connecting" as const : "disconnected" as const),
+      connectionStatusMessage: connectionSnapshot?.message,
     }
   })
 }
@@ -67,12 +100,10 @@ export function resolveProjectRuntime(machineId: MachineId, remoteHosts: RemoteH
 }
 
 export async function runSshWithInput(host: RemoteHostConfig, remoteCommand: string, input: string | null, timeoutMs = DEFAULT_SSH_TIMEOUT_MS): Promise<SshResult> {
+  await ensureServerSshPublicKey()
   const child = Bun.spawn([
     "ssh",
-    "-o",
-    "BatchMode=yes",
-    "-o",
-    "ConnectTimeout=5",
+    ...getServerSshClientArgs(),
     host.sshTarget,
     remoteCommand,
   ], {
@@ -507,12 +538,28 @@ export function parseRemoteDiscoveryOutput(stdout: string): Array<Omit<Discovere
     }))
 }
 
-export async function discoverRemoteProjects(remoteHosts: RemoteHostConfig[]): Promise<DiscoveredProject[]> {
+export interface RemoteDiscoverySnapshot {
+  projects: DiscoveredProject[]
+  connectionSnapshots: RemoteMachineConnectionSnapshots
+}
+
+export async function discoverRemoteProjectsWithStatus(remoteHosts: RemoteHostConfig[]): Promise<RemoteDiscoverySnapshot> {
   const projects: DiscoveredProject[] = []
+  const connectionSnapshots: RemoteMachineConnectionSnapshots = {}
+
+  for (const host of remoteHosts) {
+    connectionSnapshots[toRemoteMachineId(host.id)] = host.enabled
+      ? { status: "connecting" }
+      : { status: "disconnected", message: "Remote host is disabled." }
+  }
+
   await Promise.all(remoteHosts.filter((host) => host.enabled).map(async (host) => {
+    const machineId = toRemoteMachineId(host.id)
     const nodeCheck = await runSsh(host, "command -v node >/dev/null 2>&1", 5_000)
     if (nodeCheck.exitCode !== 0 && nodeCheck.stderr.trim()) {
-      console.warn(`[kanna] remote discovery failed for ${host.label}: ${nodeCheck.stderr.trim()}`)
+      const message = nodeCheck.stderr.trim()
+      connectionSnapshots[machineId] = { status: "problem", message }
+      console.warn(`[kanna] remote discovery failed for ${host.label}: ${message}`)
       return
     }
 
@@ -520,7 +567,9 @@ export async function discoverRemoteProjects(remoteHosts: RemoteHostConfig[]): P
       ? await runSshWithInput(host, "node -", getRemoteNodeDiscoveryScript(host.projectRoots), 20_000)
       : await runSsh(host, getLegacyRemoteProjectRootDiscoveryCommand(host.projectRoots), 15_000)
     if (result.exitCode !== 0) {
-      console.warn(`[kanna] remote discovery failed for ${host.label}: ${result.stderr.trim() || `exit ${result.exitCode}`}`)
+      const message = result.stderr.trim() || `exit ${result.exitCode}`
+      connectionSnapshots[machineId] = { status: "problem", message }
+      console.warn(`[kanna] remote discovery failed for ${host.label}: ${message}`)
       return
     }
 
@@ -528,16 +577,23 @@ export async function discoverRemoteProjects(remoteHosts: RemoteHostConfig[]): P
     try {
       remoteProjects = parseRemoteDiscoveryOutput(result.stdout)
     } catch (error) {
-      console.warn(`[kanna] remote discovery failed for ${host.label}: ${error instanceof Error ? error.message : String(error)}`)
+      const message = error instanceof Error ? error.message : String(error)
+      connectionSnapshots[machineId] = { status: "problem", message }
+      console.warn(`[kanna] remote discovery failed for ${host.label}: ${message}`)
       return
     }
 
+    connectionSnapshots[machineId] = { status: "connected" }
     for (const project of remoteProjects) {
       projects.push({
-        machineId: toRemoteMachineId(host.id),
+        machineId,
         ...project,
       })
     }
   }))
-  return projects
+  return { projects, connectionSnapshots }
+}
+
+export async function discoverRemoteProjects(remoteHosts: RemoteHostConfig[]): Promise<DiscoveredProject[]> {
+  return (await discoverRemoteProjectsWithStatus(remoteHosts)).projects
 }
