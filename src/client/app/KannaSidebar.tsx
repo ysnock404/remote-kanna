@@ -6,7 +6,7 @@ import { LOCAL_MACHINE_ID } from "../../shared/project-location"
 import { Button } from "../components/ui/button"
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../components/ui/dialog"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "../components/ui/context-menu"
-import { formatSidebarAgeLabel } from "../lib/formatters"
+import { formatSidebarAgeLabel, getPathBasename } from "../lib/formatters"
 import { getSidebarChatTimestamp } from "../lib/sidebarChats"
 import { cn } from "../lib/utils"
 import { ChatRow } from "../components/chat-ui/sidebar/ChatRow"
@@ -248,6 +248,8 @@ function KannaSidebarImpl({
   const [hiddenProjectsLoading, setHiddenProjectsLoading] = useState(false)
   const [hiddenProjectsError, setHiddenProjectsError] = useState<string | null>(null)
   const [restoringHiddenProjectId, setRestoringHiddenProjectId] = useState<string | null>(null)
+  const [searchDialogOpen, setSearchDialogOpen] = useState(false)
+  const [sidebarSearchQuery, setSidebarSearchQuery] = useState("")
   const resolvedKeybindings = useMemo(() => getResolvedKeybindings(keybindings), [keybindings])
   const visibleChats = useMemo(
     () => getVisibleSidebarChats(data.projectGroups, collapsedSections, expandedGroups),
@@ -282,6 +284,48 @@ function KannaSidebarImpl({
     && !currentProjectGroup.isGeneralChat
     && (currentProjectGroup.machineId ?? LOCAL_MACHINE_ID) === activeMachineId
   )
+  const sidebarSearchResults = useMemo(() => {
+    const query = sidebarSearchQuery.trim().toLowerCase()
+    if (!query) return []
+
+    const results: Array<
+      | { kind: "chat"; key: string; title: string; subtitle: string; chatId: string }
+      | { kind: "project"; key: string; title: string; subtitle: string; projectId: string }
+    > = []
+
+    for (const group of [...generalProjectGroups, ...activeMachineProjectGroups]) {
+      const projectTitle = group.title?.trim() || getPathBasename(group.localPath)
+      const projectSubtitle = group.isGeneralChat ? "General Chat" : `${group.machineLabel ? `${group.machineLabel} - ` : ""}${group.localPath}`
+      const projectMatches = !group.isGeneralChat && (
+        projectTitle.toLowerCase().includes(query)
+        || group.localPath.toLowerCase().includes(query)
+        || group.machineLabel?.toLowerCase().includes(query)
+      )
+
+      if (projectMatches) {
+        results.push({
+          kind: "project",
+          key: `project:${group.groupKey}`,
+          title: projectTitle,
+          subtitle: projectSubtitle,
+          projectId: group.groupKey,
+        })
+      }
+
+      for (const chat of group.chats) {
+        if (!chat.title.toLowerCase().includes(query)) continue
+        results.push({
+          kind: "chat",
+          key: `chat:${chat.chatId}`,
+          title: chat.title,
+          subtitle: group.isGeneralChat ? "General Chat" : `${projectTitle} - ${chat.machineLabel ?? group.machineLabel ?? "Device"}`,
+          chatId: chat.chatId,
+        })
+      }
+    }
+
+    return results.slice(0, 30)
+  }, [activeMachineProjectGroups, generalProjectGroups, sidebarSearchQuery])
 
   const activeVisibleCount = visibleChats.length
   const archivedProject = useMemo(
@@ -768,7 +812,11 @@ function KannaSidebarImpl({
                 disabled={!canCreateChatInCurrentProject}
                 onClick={handleCreateChatInCurrentProject}
               />
-              <SidebarActionRow icon={Search} label="Search" disabled />
+              <SidebarActionRow
+                icon={Search}
+                label="Search"
+                onClick={() => setSearchDialogOpen(true)}
+              />
               <SidebarActionRow icon={Plug} label="Plugins" disabled />
               <SidebarActionRow icon={Sparkles} label="Skills" disabled />
             </div>
@@ -982,6 +1030,69 @@ function KannaSidebarImpl({
             ) : (
               <p className="px-1 py-3 text-sm text-muted-foreground">
                 No hidden projects on {activeMachine?.displayName ?? "this device"}.
+              </p>
+            )}
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={searchDialogOpen}
+        onOpenChange={(dialogOpen) => {
+          setSearchDialogOpen(dialogOpen)
+          if (!dialogOpen) setSidebarSearchQuery("")
+        }}
+      >
+        <DialogContent size="md">
+          <DialogHeader>
+            <DialogTitle>Search</DialogTitle>
+            <DialogDescription>
+              {activeMachine?.displayName ?? "Current device"} projects and chats
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-3">
+            <input
+              autoFocus
+              value={sidebarSearchQuery}
+              onChange={(event) => setSidebarSearchQuery(event.target.value)}
+              placeholder="Search chats and projects"
+              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-ring"
+            />
+            {sidebarSearchQuery.trim() ? (
+              sidebarSearchResults.length > 0 ? (
+                <div className="max-h-[55vh] space-y-1 overflow-y-auto">
+                  {sidebarSearchResults.map((result) => (
+                    <button
+                      key={result.key}
+                      type="button"
+                      className="flex w-full items-center justify-between gap-3 rounded-lg border border-border/0 px-3 py-2 text-left transition-colors hover:border-border hover:bg-muted"
+                      onClick={() => {
+                        if (result.kind === "chat") {
+                          navigate(`/chat/${result.chatId}`)
+                        } else {
+                          onCreateChat(result.projectId)
+                        }
+                        setSearchDialogOpen(false)
+                        setSidebarSearchQuery("")
+                        onClose()
+                      }}
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium">{result.title}</span>
+                        <span className="block truncate text-xs text-muted-foreground">{result.subtitle}</span>
+                      </span>
+                      <span className="shrink-0 text-[11px] uppercase tracking-wide text-muted-foreground/70">
+                        {result.kind === "chat" ? "Chat" : "Project"}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="px-1 py-3 text-sm text-muted-foreground">No results found.</p>
+              )
+            ) : (
+              <p className="px-1 py-3 text-sm text-muted-foreground">
+                Search project names, paths, and chat titles.
               </p>
             )}
           </DialogBody>
