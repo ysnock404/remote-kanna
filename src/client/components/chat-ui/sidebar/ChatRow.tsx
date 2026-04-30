@@ -20,7 +20,7 @@ interface Props {
   onSelectChat: (chatId: string) => void
   onRenameChat: (chatId: string) => void
   onShareChat: (chatId: string) => void
-  onOpenInFinder: (localPath: string) => void
+  onOpenInFinder: (localPath: string, machineId?: SidebarChatRow["machineId"]) => void
   onForkChat: (chatId: string) => void
   onArchiveChat: (chatId: string) => void
   onDeleteChat: (chatId: string) => void
@@ -140,9 +140,10 @@ function ChatRowImpl({
   return (
     <ChatRowMenu
       canFork={chat.canFork}
+      showOpenInFinder={!chat.isGeneralChat}
       onRename={() => onRenameChat(chat.chatId)}
       onShare={() => onShareChat(chat.chatId)}
-      onOpenInFinder={() => onOpenInFinder(chat.localPath)}
+      onOpenInFinder={() => onOpenInFinder(chat.localPath, chat.machineId)}
       onFork={() => onForkChat(chat.chatId)}
       onArchive={() => onArchiveChat(chat.chatId)}
       onDelete={() => onDeleteChat(chat.chatId)}

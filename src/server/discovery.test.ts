@@ -51,6 +51,31 @@ describe("project discovery", () => {
     ])
   })
 
+  test("Claude adapter reads projects from .claude.json", () => {
+    const homeDir = makeTempDir()
+    const projectDir = path.join(homeDir, "workspace", "ccm-project")
+    mkdirSync(projectDir, { recursive: true })
+    writeFileSync(path.join(homeDir, ".claude.json"), JSON.stringify({
+      projects: {
+        [projectDir]: {},
+        [path.join(homeDir, "workspace", "missing-project")]: {},
+      },
+    }))
+    utimesSync(path.join(homeDir, ".claude.json"), new Date("2026-03-16T11:00:00.000Z"), new Date("2026-03-16T11:00:00.000Z"))
+
+    const projects = new ClaudeProjectDiscoveryAdapter().scan(homeDir)
+
+    expect(projects).toEqual([
+      {
+        provider: "claude",
+        machineId: "local",
+        localPath: projectDir,
+        title: "ccm-project",
+        modifiedAt: new Date("2026-03-16T11:00:00.000Z").getTime(),
+      },
+    ])
+  })
+
   test("Codex adapter reads cwd from session metadata and ignores stale or invalid entries", () => {
     const homeDir = makeTempDir()
     const sessionsDir = path.join(homeDir, ".codex", "sessions", "2026", "03", "16")
@@ -118,6 +143,37 @@ describe("project discovery", () => {
         modifiedAt: Date.parse("2026-03-16T23:05:58.940134Z"),
       },
     ])
+  })
+
+  test("Codex adapter ignores home and tool data directories", () => {
+    const homeDir = makeTempDir()
+    const sessionsDir = path.join(homeDir, ".codex", "sessions", "2026", "03", "16")
+    const liveProjectDir = path.join(homeDir, "workspace", "real-project")
+    mkdirSync(liveProjectDir, { recursive: true })
+    mkdirSync(path.join(homeDir, ".kanna"), { recursive: true })
+    mkdirSync(sessionsDir, { recursive: true })
+
+    writeFileSync(path.join(homeDir, ".codex", "session_index.jsonl"), "")
+    for (const [sessionId, cwd] of [
+      ["home-session", homeDir],
+      ["kanna-session", path.join(homeDir, ".kanna")],
+      ["project-session", liveProjectDir],
+    ]) {
+      writeFileSync(path.join(sessionsDir, `${sessionId}.jsonl`), [
+        JSON.stringify({
+          timestamp: "2026-03-16T23:05:52.000Z",
+          type: "session_meta",
+          payload: {
+            id: sessionId,
+            cwd,
+          },
+        }),
+      ].join("\n"))
+    }
+
+    const projects = new CodexProjectDiscoveryAdapter().scan(homeDir)
+
+    expect(projects.map((project) => project.localPath)).toEqual([liveProjectDir])
   })
 
   test("Codex adapter falls back to session timestamps and config projects when session index misses CLI entries", () => {

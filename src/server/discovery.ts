@@ -51,16 +51,84 @@ function resolveEncodedClaudePath(folderName: string) {
   return currentPath || "/"
 }
 
-function normalizeExistingDirectory(localPath: string) {
+function isSameOrNestedPath(localPath: string, parentPath: string) {
+  const normalizedLocalPath = process.platform === "win32" ? localPath.toLowerCase() : localPath
+  const normalizedParentPath = process.platform === "win32" ? parentPath.toLowerCase() : parentPath
+  return normalizedLocalPath === normalizedParentPath
+    || normalizedLocalPath.startsWith(`${normalizedParentPath}${path.sep}`)
+}
+
+function isIgnoredDiscoveredDirectory(localPath: string, homeDir: string) {
+  const homePath = resolveLocalPath(homeDir)
+  const normalizedLocalPath = process.platform === "win32" ? localPath.toLowerCase() : localPath
+  const normalizedHomePath = process.platform === "win32" ? homePath.toLowerCase() : homePath
+  if (normalizedLocalPath === normalizedHomePath) {
+    return true
+  }
+
+  for (const internalDir of [".claude", ".codex", ".kanna", ".kanna-dev"]) {
+    if (isSameOrNestedPath(localPath, path.join(homePath, internalDir))) {
+      return true
+    }
+  }
+
+  if (localPath.includes(`${path.sep}.claude${path.sep}worktrees${path.sep}`)) {
+    return true
+  }
+
+  if (process.platform === "win32") {
+    const normalized = localPath.toLowerCase()
+    if (/^[a-z]:\\windows(?:\\|$)/.test(normalized)) return true
+    if (/^[a-z]:\\program files(?: \(x86\))?(?:\\|$)/.test(normalized)) return true
+  }
+
+  return false
+}
+
+function normalizeExistingDirectory(localPath: string, homeDir: string = homedir()) {
   try {
     const normalized = resolveLocalPath(localPath)
     if (!statSync(normalized).isDirectory()) {
+      return null
+    }
+    if (isIgnoredDiscoveredDirectory(normalized, homeDir)) {
       return null
     }
     return normalized
   } catch {
     return null
   }
+}
+
+function readJsonRecordFile(filePath: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(readFileSync(filePath, "utf8"))
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null
+    }
+    return parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+function readClaudeJsonProjectPaths(homeDir: string) {
+  const claudeJsonPath = path.join(homeDir, ".claude.json")
+  if (!existsSync(claudeJsonPath)) {
+    return []
+  }
+
+  const json = readJsonRecordFile(claudeJsonPath)
+  const projects = json?.projects
+  if (!projects || typeof projects !== "object" || Array.isArray(projects)) {
+    return []
+  }
+
+  const modifiedAt = statSync(claudeJsonPath).mtimeMs
+  return Object.keys(projects as Record<string, unknown>).map((localPath) => ({
+    localPath,
+    modifiedAt,
+  }))
 }
 
 function mergeDiscoveredProjects(projects: Iterable<DiscoveredProject>): DiscoveredProject[] {
@@ -93,30 +161,42 @@ export class ClaudeProjectDiscoveryAdapter implements ProjectDiscoveryAdapter {
 
   scan(homeDir: string = homedir()): ProviderDiscoveredProject[] {
     const projectsDir = path.join(homeDir, ".claude", "projects")
-    if (!existsSync(projectsDir)) {
-      return []
-    }
-
-    const entries = readdirSync(projectsDir, { withFileTypes: true })
     const projects: ProviderDiscoveredProject[] = []
 
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
+    for (const project of readClaudeJsonProjectPaths(homeDir)) {
+      const normalizedPath = normalizeExistingDirectory(project.localPath, homeDir)
+      if (!normalizedPath) continue
 
-      const resolvedPath = resolveEncodedClaudePath(entry.name)
-      const normalizedPath = normalizeExistingDirectory(resolvedPath)
-      if (!normalizedPath) {
-        continue
-      }
-
-      const stat = statSync(path.join(projectsDir, entry.name))
       projects.push({
         provider: this.provider,
         machineId: LOCAL_MACHINE_ID,
         localPath: normalizedPath,
         title: path.basename(normalizedPath) || normalizedPath,
-        modifiedAt: stat.mtimeMs,
+        modifiedAt: project.modifiedAt,
       })
+    }
+
+    if (existsSync(projectsDir)) {
+      const entries = readdirSync(projectsDir, { withFileTypes: true })
+
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+
+        const resolvedPath = resolveEncodedClaudePath(entry.name)
+        const normalizedPath = normalizeExistingDirectory(resolvedPath, homeDir)
+        if (!normalizedPath) {
+          continue
+        }
+
+        const stat = statSync(path.join(projectsDir, entry.name))
+        projects.push({
+          provider: this.provider,
+          machineId: LOCAL_MACHINE_ID,
+          localPath: normalizedPath,
+          title: path.basename(normalizedPath) || normalizedPath,
+          modifiedAt: stat.mtimeMs,
+        })
+      }
     }
 
     const mergedProjects = mergeDiscoveredProjects(projects).map((project) => ({
@@ -250,7 +330,7 @@ export class CodexProjectDiscoveryAdapter implements ProjectDiscoveryAdapter {
         continue
       }
 
-      const normalizedPath = normalizeExistingDirectory(cwd)
+      const normalizedPath = normalizeExistingDirectory(cwd, homeDir)
       if (!normalizedPath) {
         continue
       }
@@ -269,7 +349,7 @@ export class CodexProjectDiscoveryAdapter implements ProjectDiscoveryAdapter {
         continue
       }
 
-      const normalizedPath = normalizeExistingDirectory(configuredPath)
+      const normalizedPath = normalizeExistingDirectory(configuredPath, homeDir)
       if (!normalizedPath) {
         continue
       }

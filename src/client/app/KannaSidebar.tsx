@@ -10,7 +10,7 @@ import { cn } from "../lib/utils"
 import { ChatRow } from "../components/chat-ui/sidebar/ChatRow"
 import { LocalProjectsSection } from "../components/chat-ui/sidebar/LocalProjectsSection"
 import { getResolvedKeybindings } from "../lib/keybindings"
-import type { KeybindingsSnapshot, SidebarData, SidebarChatRow, UpdateSnapshot } from "../../shared/types"
+import type { KeybindingsSnapshot, MachineId, SidebarData, SidebarChatRow, UpdateSnapshot } from "../../shared/types"
 import type { SocketStatus } from "./socket"
 import {
   getSidebarJumpTargetIndex,
@@ -62,9 +62,10 @@ interface KannaSidebarProps {
   onArchiveChat: (chat: SidebarChatRow) => void
   onOpenArchivedChat: (chatId: string) => void
   onDeleteChat: (chat: SidebarChatRow) => void
+  onRenameProject: (projectId: string, currentTitle: string) => void
   onOpenAddProjectModal: () => void
   onCopyPath: (localPath: string) => void
-  onOpenExternalPath: (action: "open_finder" | "open_editor", localPath: string) => void
+  onOpenExternalPath: (action: "open_finder" | "open_editor", localPath: string, machineId?: MachineId) => void
   onHideProject: (projectId: string) => void
   onReorderProjectGroups: (projectIds: string[]) => void
   editorLabel: string
@@ -93,6 +94,7 @@ function KannaSidebarImpl({
   onArchiveChat,
   onOpenArchivedChat,
   onDeleteChat,
+  onRenameProject,
   onOpenAddProjectModal,
   onCopyPath,
   onOpenExternalPath,
@@ -123,11 +125,6 @@ function KannaSidebarImpl({
   const visibleIndexByChatId = useMemo(
     () => new Map(visibleChats.map((entry) => [entry.chat.chatId, entry.visibleIndex])),
     [visibleChats]
-  )
-
-  const projectIdByPath = useMemo(
-    () => new Map(data.projectGroups.map((group) => [group.localPath, group.groupKey])),
-    [data.projectGroups]
   )
 
   const activeVisibleCount = visibleChats.length
@@ -210,7 +207,7 @@ function KannaSidebarImpl({
         }}
         onRenameChat={() => onRenameChat(chat)}
         onShareChat={() => onShareChat(chat.chatId)}
-        onOpenInFinder={() => onOpenExternalPath("open_finder", chat.localPath)}
+        onOpenInFinder={(localPath, machineId) => onOpenExternalPath("open_finder", localPath, machineId)}
         onForkChat={() => onForkChat(chat)}
         onArchiveChat={() => onArchiveChat(chat)}
         onDeleteChat={() => onDeleteChat(chat)}
@@ -414,7 +411,17 @@ function KannaSidebarImpl({
               <PanelLeft className="absolute inset-0 h-4 w-4 sm:h-6 sm:w-6 text-slate-500 dark:text-slate-400 transition-all duration-200 ease-out opacity-0 scale-0 group-hover/sidebar-collapse:opacity-100 group-hover/sidebar-collapse:scale-80 hover:opacity-50" />
             </button>
             <Flower className="h-5 w-5 sm:h-6 sm:w-6 text-logo md:hidden" />
-            <span className="font-logo text-base uppercase sm:text-md text-slate-600 dark:text-slate-100">{APP_NAME}</span>
+            <button
+              type="button"
+              onClick={() => {
+                navigate("/")
+                onClose()
+              }}
+              className="font-logo text-base uppercase sm:text-md text-slate-600 transition-colors hover:text-foreground dark:text-slate-100"
+              title="Go to main page"
+            >
+              {APP_NAME}
+            </button>
           </div>
           <div className="flex items-center justify-self-end md:justify-self-auto">
             <Button
@@ -510,12 +517,8 @@ function KannaSidebarImpl({
               onToggleExpandedGroup={toggleExpandedGroup}
               renderChatRow={renderChatRow}
               onShowArchivedProject={setArchivedProjectId}
-              onNewLocalChat={(localPath) => {
-                const projectId = projectIdByPath.get(localPath)
-                if (projectId) {
-                  onCreateChat(projectId)
-                }
-              }}
+              onNewLocalChat={onCreateChat}
+              onRenameProject={onRenameProject}
               onCopyPath={onCopyPath}
               onOpenExternalPath={onOpenExternalPath}
               onHideProject={onHideProject}

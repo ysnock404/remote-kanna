@@ -1,6 +1,6 @@
 # Remote Kanna
 
-Remote Kanna is a public fork of [jakemor/kanna](https://github.com/jakemor/kanna) focused on keeping Kanna's web UI and agent workflow while adding a central remote setup for multiple machines.
+Remote Kanna is a local-first remote coding UI focused on a central setup for multiple machines.
 
 The target workflow is:
 
@@ -10,7 +10,7 @@ browser -> Remote Kanna server -> SSH/Tailscale IP -> remote machine -> Codex / 
 
 ## Upstream Base
 
-- Upstream repository: `https://github.com/jakemor/kanna`
+- Upstream Kanna links, hosted share, analytics, and self-update checks are intentionally disabled in this fork.
 - Upstream base commit: `17ccafca8af2436067b08630bacfcf915ec83a8b`
 
 Keep this commit around when rebasing or pulling newer Kanna changes into this fork.

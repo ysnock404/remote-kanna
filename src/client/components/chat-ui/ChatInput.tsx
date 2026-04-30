@@ -14,7 +14,7 @@ import {
 import { Button, buttonVariants } from "../ui/button"
 import { Textarea } from "../ui/textarea"
 import { ScrollArea } from "../ui/scroll-area"
-import { cn } from "../../lib/utils"
+import { cn, generateUUID } from "../../lib/utils"
 import { useIsStandalone } from "../../hooks/useIsStandalone"
 import { useChatInputStore } from "../../stores/chatInputStore"
 import { NEW_CHAT_COMPOSER_ID, type ComposerState, useChatPreferencesStore } from "../../stores/chatPreferencesStore"
@@ -35,6 +35,7 @@ const CLIPBOARD_EXTENSION_BY_MIME_TYPE: Record<string, string> = {
   "image/png": "png",
   "image/webp": "webp",
 }
+const CLIPBOARD_IMAGE_FILE_EXTENSIONS = new Set([".gif", ".jpeg", ".jpg", ".png", ".webp"])
 
 export function willExceedAttachmentLimit(args: {
   currentAttachmentCount: number
@@ -47,28 +48,50 @@ export function willExceedAttachmentLimit(args: {
 }
 
 type ClipboardFileItem = Pick<DataTransferItem, "kind" | "type" | "getAsFile">
+type ClipboardFileItems = Iterable<ClipboardFileItem> | ArrayLike<ClipboardFileItem>
+type ClipboardFileList = Pick<DataTransfer, "files" | "items" | "getData">
 
 function hasClipboardTextPayload(clipboardData: DataTransfer | null | undefined) {
   if (!clipboardData) return false
   return clipboardData.types.includes("text/plain") || clipboardData.types.includes("text/html")
 }
 
-function getClipboardImageExtension(file: File) {
-  return CLIPBOARD_EXTENSION_BY_MIME_TYPE[file.type] ?? "bin"
+function getClipboardImageExtension(file: File, fallbackMimeType?: string) {
+  const mimeType = file.type || fallbackMimeType || ""
+  const extension = CLIPBOARD_EXTENSION_BY_MIME_TYPE[mimeType]
+  if (extension) return extension
+
+  const fileExtension = getFileExtension(file.name)
+  if (fileExtension && CLIPBOARD_IMAGE_FILE_EXTENSIONS.has(fileExtension)) {
+    return fileExtension.slice(1)
+  }
+
+  return "bin"
 }
 
-function isGenericClipboardImageName(file: File) {
+function getFileExtension(fileName: string) {
+  const match = fileName.trim().toLowerCase().match(/\.[a-z0-9]+$/)
+  return match?.[0] ?? ""
+}
+
+function isClipboardImageFile(file: File, fallbackMimeType?: string) {
+  return file.type.startsWith("image/")
+    || Boolean(fallbackMimeType?.startsWith("image/"))
+    || CLIPBOARD_IMAGE_FILE_EXTENSIONS.has(getFileExtension(file.name))
+}
+
+function isGenericClipboardImageName(file: File, fallbackMimeType?: string) {
   const normalized = file.name.trim().toLowerCase()
   if (!normalized) return true
 
-  const expectedExtension = getClipboardImageExtension(file)
+  const expectedExtension = getClipboardImageExtension(file, fallbackMimeType)
   return normalized === `image.${expectedExtension}` || normalized === "image.png"
 }
 
-function normalizeClipboardImageFile(file: File, index: number, timestamp: number) {
-  if (file.name && !isGenericClipboardImageName(file)) return file
+function normalizeClipboardImageFile(file: File, index: number, timestamp: number, fallbackMimeType?: string) {
+  if (file.name && !isGenericClipboardImageName(file, fallbackMimeType)) return file
 
-  const extension = getClipboardImageExtension(file)
+  const extension = getClipboardImageExtension(file, fallbackMimeType)
   const suffix = index === 0 ? "" : `-${index}`
   const fileName = `clipboard-${timestamp}${suffix}.${extension}`
   Object.defineProperty(file, "name", {
@@ -78,17 +101,123 @@ function normalizeClipboardImageFile(file: File, index: number, timestamp: numbe
   return file
 }
 
-export function getClipboardImageFiles(items: Iterable<ClipboardFileItem>, timestamp: number) {
-  const files: File[] = []
+function decodeHtmlAttributeValue(value: string) {
+  return value
+    .replaceAll("&amp;", "&")
+    .replaceAll("&quot;", "\"")
+    .replaceAll("&#39;", "'")
+    .replaceAll("&apos;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+}
 
-  for (const item of items) {
-    if (item.kind !== "file" || !item.type.startsWith("image/")) continue
-    const file = item.getAsFile()
-    if (!file) continue
-    files.push(normalizeClipboardImageFile(file, files.length, timestamp))
+function createImageFileFromDataUrl(dataUrl: string, index: number, timestamp: number) {
+  const commaIndex = dataUrl.indexOf(",")
+  if (!dataUrl.startsWith("data:") || commaIndex < 0) return null
+
+  const metadata = dataUrl.slice("data:".length, commaIndex)
+  const mimeType = metadata.split(";")[0]?.toLowerCase() || "application/octet-stream"
+  if (!mimeType.startsWith("image/")) return null
+
+  const payload = dataUrl.slice(commaIndex + 1)
+  const isBase64 = metadata.toLowerCase().split(";").includes("base64")
+  let bytes: Uint8Array
+  if (isBase64) {
+    const binary = atob(payload)
+    bytes = new Uint8Array(binary.length)
+    for (let byteIndex = 0; byteIndex < binary.length; byteIndex += 1) {
+      bytes[byteIndex] = binary.charCodeAt(byteIndex)
+    }
+  } else {
+    bytes = new TextEncoder().encode(decodeURIComponent(payload))
+  }
+
+  const extension = CLIPBOARD_EXTENSION_BY_MIME_TYPE[mimeType] ?? "bin"
+  const suffix = index === 0 ? "" : `-${index}`
+  return new File([bytes], `clipboard-${timestamp}${suffix}.${extension}`, { type: mimeType })
+}
+
+export function getClipboardImageFilesFromHtml(html: string, timestamp: number) {
+  if (!html.trim()) return []
+
+  const files: File[] = []
+  const imageSourcePattern = /<img\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/gi
+  let match: RegExpExecArray | null
+
+  while ((match = imageSourcePattern.exec(html)) !== null) {
+    const rawSource = match[1] ?? match[2] ?? match[3] ?? ""
+    const source = decodeHtmlAttributeValue(rawSource.trim())
+    if (!source.startsWith("data:image/")) continue
+    const file = createImageFileFromDataUrl(source, files.length, timestamp)
+    if (file) {
+      files.push(file)
+    }
   }
 
   return files
+}
+
+export function getClipboardImageFiles(items: ClipboardFileItems, timestamp: number) {
+  const files: File[] = []
+
+  for (const item of Array.from(items)) {
+    if (!item || item.kind !== "file") continue
+    const file = item.getAsFile()
+    if (!file) continue
+    if (!isClipboardImageFile(file, item.type)) continue
+    files.push(normalizeClipboardImageFile(file, files.length, timestamp, item.type))
+  }
+
+  return files
+}
+
+export function getClipboardImageFilesFromDataTransfer(clipboardData: ClipboardFileList, timestamp: number) {
+  const itemFiles = getClipboardImageFiles(clipboardData.items, timestamp)
+  if (itemFiles.length > 0) {
+    return itemFiles
+  }
+
+  const fileListFiles = Array.from(clipboardData.files)
+    .filter((file) => isClipboardImageFile(file))
+    .map((file, index) => normalizeClipboardImageFile(file, index, timestamp))
+  if (fileListFiles.length > 0) {
+    return fileListFiles
+  }
+
+  return getClipboardImageFilesFromHtml(clipboardData.getData("text/html"), timestamp)
+}
+
+async function getNavigatorClipboardImageFiles(timestamp: number) {
+  if (typeof navigator === "undefined" || !navigator.clipboard?.read) {
+    return null
+  }
+
+  const clipboardItems = await navigator.clipboard.read()
+  const files: File[] = []
+  for (const item of clipboardItems) {
+    const imageType = item.types.find((type) => type.startsWith("image/"))
+    if (!imageType) continue
+    const blob = await item.getType(imageType)
+    const extension = CLIPBOARD_EXTENSION_BY_MIME_TYPE[imageType] ?? "bin"
+    const suffix = files.length === 0 ? "" : `-${files.length}`
+    files.push(new File([blob], `clipboard-${timestamp}${suffix}.${extension}`, { type: imageType }))
+  }
+  return files
+}
+
+function summarizeClipboardData(clipboardData: DataTransfer) {
+  const types = Array.from(clipboardData.types ?? [])
+  const items = Array.from(clipboardData.items ?? []).map((item) => `${item.kind}:${item.type || "unknown"}`)
+  const files = Array.from(clipboardData.files ?? []).map((file) => `${file.name || "unnamed"}:${file.type || "unknown"}:${file.size}`)
+  return { types, items, files }
+}
+
+function hasImageLikeClipboardPayload(clipboardData: DataTransfer) {
+  const summary = summarizeClipboardData(clipboardData)
+  if (summary.types.some((type) => type.toLowerCase().includes("image"))) return true
+  if (summary.items.some((item) => item.toLowerCase().includes("image"))) return true
+  if (summary.files.length > 0) return true
+  return /<img\b/i.test(clipboardData.getData("text/html"))
 }
 
 export function trimTrailingPastedNewlines(text: string) {
@@ -216,6 +345,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const removedAttachmentIdsRef = useRef<Set<string>>(new Set())
   const previousProjectIdRef = useRef<string | null>(projectId ?? null)
   const latestChatIdRef = useRef<string | null>(chatId ?? null)
+  const lastPasteEventAtRef = useRef(0)
 
   const providerLocked = activeProvider !== null
   const providerPrefs = getEffectiveComposerState(composerState, activeProvider, providerDefaults)
@@ -407,7 +537,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       if (!file) break
 
       activeUploadsRef.current += 1
-      const tempId = crypto.randomUUID()
+      const tempId = generateUUID()
       const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined
       const generation = uploadGenerationRef.current
 
@@ -506,6 +636,71 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     processUploadQueue()
   }, [processUploadQueue, projectId])
 
+  const reportClipboardMiss = useCallback((clipboardData: DataTransfer) => {
+    if (!hasImageLikeClipboardPayload(clipboardData)) return
+
+    const summary = summarizeClipboardData(clipboardData)
+    console.info("[ChatInput] Paste did not include uploadable image bytes", summary)
+    setUploadError(`Paste detected, but the browser did not expose image bytes. Clipboard: ${summary.types.join(", ") || "unknown"}. Use the paperclip button if this keeps happening.`)
+  }, [])
+
+  const enqueueClipboardImages = useCallback((clipboardData: DataTransfer | null, options?: { reportMiss?: boolean }) => {
+    if (!clipboardData) return false
+    lastPasteEventAtRef.current = Date.now()
+
+    const files = getClipboardImageFilesFromDataTransfer(clipboardData, Date.now())
+    if (files.length === 0) {
+      if (options?.reportMiss) {
+        reportClipboardMiss(clipboardData)
+      }
+      return false
+    }
+
+    console.info("[ChatInput] Queuing pasted image attachments", { count: files.length, projectId })
+    enqueueFiles(files)
+    return true
+  }, [enqueueFiles, projectId, reportClipboardMiss])
+
+  const enqueueNavigatorClipboardImages = useCallback(async () => {
+    if (disabled) return
+    if (!projectId) {
+      setUploadError("Open a project before uploading files.")
+      return
+    }
+
+    try {
+      const files = await getNavigatorClipboardImageFiles(Date.now())
+      if (files === null) {
+        setUploadError("Browser clipboard image read is unavailable. Use Ctrl+V or Cmd+V to paste images.")
+        return
+      }
+      if (files.length === 0) {
+        setUploadError("No image found in the clipboard.")
+        return
+      }
+
+      console.debug("[ChatInput] Queuing clipboard image attachments", { count: files.length, projectId })
+      enqueueFiles(files)
+    } catch (error) {
+      console.debug("[ChatInput] Clipboard image read failed:", error)
+      setUploadError("Browser blocked clipboard image access. Use Ctrl+V or Cmd+V to paste images.")
+    }
+  }, [disabled, enqueueFiles, projectId])
+
+  useEffect(() => {
+    function handleWindowPaste(event: ClipboardEvent) {
+      if (disabled || !event.clipboardData) return
+      if (event.defaultPrevented) return
+      if (enqueueClipboardImages(event.clipboardData, { reportMiss: true })) {
+        event.preventDefault()
+        event.stopPropagation()
+      }
+    }
+
+    window.addEventListener("paste", handleWindowPaste, true)
+    return () => window.removeEventListener("paste", handleWindowPaste, true)
+  }, [disabled, enqueueClipboardImages])
+
   useImperativeHandle(forwardedRef, () => ({
     enqueueFiles,
   }), [enqueueFiles])
@@ -578,6 +773,30 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       return
     }
 
+    if (
+      event.key.toLowerCase() === "v"
+      && event.altKey
+      && !event.ctrlKey
+      && !event.metaKey
+      && event.getModifierState?.("AltGraph") !== true
+    ) {
+      event.preventDefault()
+      void enqueueNavigatorClipboardImages()
+      return
+    }
+
+    if (
+      event.key.toLowerCase() === "v"
+      && (event.ctrlKey || event.metaKey)
+      && !event.altKey
+    ) {
+      const shortcutAt = Date.now()
+      window.setTimeout(() => {
+        if (lastPasteEventAtRef.current >= shortcutAt) return
+        setUploadError("Paste shortcut detected, but the browser did not send clipboard data. Click the chat input and try again, or use the paperclip button.")
+      }, 500)
+    }
+
     const isTouchDevice = "ontouchstart" in window || navigator.maxTouchPoints > 0
     if (event.key === "Enter" && !event.shiftKey && !isTouchDevice && !disabled && hasTextToSend && !hasPendingUploads) {
       event.preventDefault()
@@ -586,16 +805,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }
 
   function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
-    const files = getClipboardImageFiles(event.clipboardData.items, Date.now())
+    const hasPastedImages = enqueueClipboardImages(event.clipboardData, { reportMiss: true })
     const pastedText = event.clipboardData.getData("text/plain")
     const trimmedText = trimTrailingPastedNewlines(pastedText)
     const shouldTrimTrailingNewlines = pastedText.length > 0 && trimmedText !== pastedText
 
-    if (files.length === 0 && !shouldTrimTrailingNewlines) return
-
-    if (files.length > 0) {
-      enqueueFiles(files)
-    }
+    if (!hasPastedImages && !shouldTrimTrailingNewlines) return
 
     if (shouldTrimTrailingNewlines) {
       event.preventDefault()
@@ -617,7 +832,16 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       return
     }
 
-    if (!hasClipboardTextPayload(event.clipboardData)) {
+    if (hasPastedImages || !hasClipboardTextPayload(event.clipboardData)) {
+      event.preventDefault()
+    }
+  }
+
+  function handleBeforeInput(event: React.FormEvent<HTMLTextAreaElement>) {
+    const nativeEvent = event.nativeEvent as InputEvent & { dataTransfer?: DataTransfer | null }
+    if (nativeEvent.inputType !== "insertFromPaste" || !nativeEvent.dataTransfer) return
+
+    if (enqueueClipboardImages(nativeEvent.dataTransfer, { reportMiss: true })) {
       event.preventDefault()
     }
   }
@@ -689,7 +913,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               aria-label="Add attachment"
               className={cn(
                 buttonVariants({ variant: "ghost", size: "icon" }),
-                "relative md:hidden flex-shrink-0 ml-1 mb-1 h-10 w-10 rounded-full text-muted-foreground hover:text-foreground",
+                "relative flex-shrink-0 self-end ml-1 md:ml-1.5 mb-1 md:mb-1.5 h-10 w-10 md:h-11 md:w-11 rounded-full text-muted-foreground hover:text-foreground",
                 disabled && "pointer-events-none opacity-50",
               )}
             >
@@ -721,10 +945,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 if (chatId) setDraft(chatId, event.target.value)
                 autoResize()
               }}
+              onBeforeInput={handleBeforeInput}
               onPaste={handlePaste}
               onKeyDown={handleKeyDown}
               disabled={disabled}
-              className="flex-1 text-base p-3 md:p-4 !pr-2 pl-0 md:pl-6 resize-none max-h-[200px] outline-none bg-transparent border-0 shadow-none"
+              className="flex-1 text-base p-3 md:p-4 !pr-2 pl-1 md:pl-2 resize-none max-h-[200px] outline-none bg-transparent border-0 shadow-none"
             />
             <Button
               type="button"

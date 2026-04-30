@@ -57,7 +57,10 @@ export type TerminalEvent =
 export type ClientCommand =
   | { type: "project.open"; localPath: string; machineId?: MachineId }
   | { type: "project.create"; localPath: string; title: string; machineId?: MachineId }
+  | { type: "project.rename"; projectId: string; title: string }
   | { type: "project.remove"; projectId: string }
+  | { type: "filesystem.listDirectories"; machineId?: MachineId; path?: string }
+  | { type: "filesystem.listProjectFiles"; projectId: string }
   | { type: "sidebar.reorderProjectGroups"; projectIds: string[] }
   | { type: "project.readDiffPatch"; projectId: string; path: string }
   | { type: "system.ping" }
@@ -85,6 +88,7 @@ export type ClientCommand =
     }
   | {
       type: "system.openExternal"
+      machineId?: MachineId
       localPath: string
       action: "open_finder" | "open_terminal" | "open_editor" | "open_preview" | "open_default"
       line?: number
@@ -92,6 +96,7 @@ export type ClientCommand =
       editor?: EditorOpenSettings
     }
   | { type: "chat.create"; projectId: string }
+  | { type: "chat.createGeneral" }
   | { type: "chat.fork"; chatId: string }
   | { type: "chat.rename"; chatId: string; title: string }
   | { type: "chat.archive"; chatId: string }

@@ -495,6 +495,63 @@ describe("AgentCoordinator codex integration", () => {
     ])
   })
 
+  test("tells providers that general chat has no attached project", async () => {
+    const startTurnCalls: string[] = []
+    const fakeCodexManager = {
+      async startSession() {},
+      async startTurn(args: { content: string }): Promise<HarnessTurn> {
+        startTurnCalls.push(args.content)
+        async function* stream() {
+          yield {
+            type: "transcript" as const,
+            entry: timestamped({
+              kind: "result",
+              subtype: "success",
+              isError: false,
+              durationMs: 0,
+              result: "",
+            }),
+          }
+        }
+
+        return {
+          provider: "codex",
+          stream: stream(),
+          interrupt: async () => {},
+          close: () => {},
+        }
+      },
+    }
+
+    const store = createFakeStore({ isGeneralChat: true })
+    const coordinator = new AgentCoordinator({
+      store: store as never,
+      onStateChange: () => {},
+      codexManager: fakeCodexManager as never,
+      generateTitle: async () => ({
+        title: "Project status",
+        usedFallback: false,
+        failureMessage: null,
+      }),
+    })
+
+    await coordinator.send({
+      type: "chat.send",
+      chatId: "chat-1",
+      provider: "codex",
+      content: "qual e o estado do projeto?",
+      model: "gpt-5.4",
+    })
+
+    expect(startTurnCalls[0]).toContain("This conversation is a general chat. No user project or repository is attached.")
+    expect(startTurnCalls[0]).toContain("qual e o estado do projeto?")
+    const userPrompt = store.messages.find((entry) => entry.kind === "user_prompt")
+    expect(userPrompt).toMatchObject({
+      kind: "user_prompt",
+      content: "qual e o estado do projeto?",
+    })
+  })
+
   test("maps codex model options into session and turn settings", async () => {
     const sessionCalls: Array<{ chatId: string; sessionToken: string | null; serviceTier?: string }> = []
     const turnCalls: Array<{ effort?: string; serviceTier?: string }> = []
@@ -1590,7 +1647,7 @@ describe("AgentCoordinator claude integration", () => {
   })
 })
 
-function createFakeStore() {
+function createFakeStore(options: { isGeneralChat?: boolean } = {}) {
   const chat = {
     id: "chat-1",
     projectId: "project-1",
@@ -1603,6 +1660,7 @@ function createFakeStore() {
   const project = {
     id: "project-1",
     localPath: "/tmp/project",
+    isGeneralChat: options.isGeneralChat || undefined,
   }
   return {
     chat,

@@ -58,7 +58,7 @@ describe("startShareTunnel", () => {
         return {
           once(event: "url" | "connected" | "error" | "exit", listener: ((url: string) => void) | (() => void) | ((error: Error) => void) | ((code: number | null, signal: NodeJS.Signals | null) => void)) {
             if (event === "url") {
-              queueMicrotask(() => (listener as (url: string) => void)("https://kanna.trycloudflare.com"))
+              queueMicrotask(() => (listener as (url: string) => void)("https://remote-kanna.trycloudflare.com"))
             }
             return this
           },
@@ -75,7 +75,7 @@ describe("startShareTunnel", () => {
 
     expect(installCalls).toEqual(["/tmp/cloudflared"])
     expect(quickTunnelUrls).toEqual(["http://localhost:3333"])
-    expect(shareTunnel.publicUrl).toBe("https://kanna.trycloudflare.com")
+    expect(shareTunnel.publicUrl).toBe("https://remote-kanna.trycloudflare.com")
     shareTunnel.stop()
     expect(stopCalls).toBe(1)
   })
@@ -151,17 +151,17 @@ describe("logShareDetails", () => {
       (message) => {
         logLines.push(message)
       },
-      "https://kanna.trycloudflare.com",
+      "https://remote-kanna.trycloudflare.com",
       "http://localhost:3333",
       async (url) => `[qr:${url}]\n`,
     )
 
     expect(logLines).toEqual([
       "QR Code:",
-      "[qr:https://kanna.trycloudflare.com]",
+      "[qr:https://remote-kanna.trycloudflare.com]",
       "",
       "Public URL:",
-      "https://kanna.trycloudflare.com",
+      "https://remote-kanna.trycloudflare.com",
       "",
       "Local URL:",
       "http://localhost:3333",
@@ -171,7 +171,7 @@ describe("logShareDetails", () => {
 
 describe("renderTerminalQr", () => {
   test("renders an ANSI qr string", async () => {
-    const result = await renderTerminalQr("https://kanna.trycloudflare.com")
+    const result = await renderTerminalQr("https://remote-kanna.trycloudflare.com")
 
     expect(result).toContain("\x1b[47m")
     expect(result).toContain("\n")

@@ -22,6 +22,7 @@ import { resolveLocalPath } from "./paths"
 const COMPACTION_THRESHOLD_BYTES = 2 * 1024 * 1024
 const STALE_EMPTY_CHAT_MAX_AGE_MS = 30 * 60 * 1000
 const SIDEBAR_PROJECT_ORDER_FILE = "sidebar-order.json"
+const GENERAL_CHAT_WORKSPACE_DIR = "general-chat-workspace"
 
 function normalizeProjectPath(machineId: MachineId, localPath: string) {
   if (machineId === LOCAL_MACHINE_ID) {
@@ -89,6 +90,7 @@ interface ParsedReplayEvent {
 function getReplayEventPriority(event: StoreEvent) {
   switch (event.type) {
     case "project_opened":
+    case "project_renamed":
     case "project_removed":
       return 0
     case "chat_created":
@@ -439,12 +441,14 @@ export class EventStore {
       case "project_opened": {
         const machineId = normalizeMachineId(event.machineId)
         const localPath = normalizeProjectPath(machineId, event.localPath)
+        const existing = this.state.projectsById.get(event.projectId)
         const project = {
           id: event.projectId,
           machineId,
           localPath,
           title: event.title,
-          createdAt: event.timestamp,
+          isGeneralChat: event.isGeneralChat || undefined,
+          createdAt: existing?.createdAt ?? event.timestamp,
           updatedAt: event.timestamp,
         }
         this.state.projectsById.set(project.id, project)
@@ -457,6 +461,13 @@ export class EventStore {
         project.deletedAt = event.timestamp
         project.updatedAt = event.timestamp
         this.state.projectIdsByPath.delete(getProjectLocationKey(normalizeMachineId(project.machineId), project.localPath))
+        break
+      }
+      case "project_renamed": {
+        const project = this.state.projectsById.get(event.projectId)
+        if (!project || project.deletedAt) break
+        project.title = event.title
+        project.updatedAt = event.timestamp
         break
       }
       case "chat_created": {
@@ -648,7 +659,12 @@ export class EventStore {
     return entries
   }
 
-  async openProject(localPath: string, title?: string, machineId: MachineId = LOCAL_MACHINE_ID) {
+  async openProject(
+    localPath: string,
+    title?: string,
+    machineId: MachineId = LOCAL_MACHINE_ID,
+    options?: { isGeneralChat?: boolean }
+  ) {
     const normalizedMachineId = normalizeMachineId(machineId)
     const normalized = normalizeProjectPath(normalizedMachineId, localPath)
     const locationKey = getProjectLocationKey(normalizedMachineId, normalized)
@@ -656,6 +672,20 @@ export class EventStore {
     if (existingId) {
       const existing = this.state.projectsById.get(existingId)
       if (existing && !existing.deletedAt) {
+        if (options?.isGeneralChat && !existing.isGeneralChat) {
+          const event: ProjectEvent = {
+            v: STORE_VERSION,
+            type: "project_opened",
+            timestamp: Date.now(),
+            projectId: existing.id,
+            machineId: normalizedMachineId,
+            localPath: normalized,
+            title: title?.trim() || existing.title,
+            isGeneralChat: true,
+          }
+          await this.append(this.projectsLogPath, event)
+          return this.state.projectsById.get(existing.id)!
+        }
         return existing
       }
     }
@@ -671,9 +701,16 @@ export class EventStore {
       machineId: normalizedMachineId,
       localPath: normalized,
       title: title?.trim() || path.basename(normalized) || normalized,
+      isGeneralChat: options?.isGeneralChat || undefined,
     }
     await this.append(this.projectsLogPath, event)
     return this.state.projectsById.get(projectId)!
+  }
+
+  async ensureGeneralChatProject() {
+    const localPath = path.join(this.dataDir, GENERAL_CHAT_WORKSPACE_DIR)
+    await mkdir(localPath, { recursive: true })
+    return await this.openProject(localPath, "General Chat", LOCAL_MACHINE_ID, { isGeneralChat: true })
   }
 
   async removeProject(projectId: string) {
@@ -689,6 +726,30 @@ export class EventStore {
       projectId,
     }
     await this.append(this.projectsLogPath, event)
+  }
+
+  async renameProject(projectId: string, title: string) {
+    const project = this.getProject(projectId)
+    if (!project) {
+      throw new Error("Project not found")
+    }
+    const trimmedTitle = title.trim()
+    if (!trimmedTitle) {
+      throw new Error("Project name is required")
+    }
+    if (project.title === trimmedTitle) {
+      return project
+    }
+
+    const event: ProjectEvent = {
+      v: STORE_VERSION,
+      type: "project_renamed",
+      timestamp: Date.now(),
+      projectId,
+      title: trimmedTitle,
+    }
+    await this.append(this.projectsLogPath, event)
+    return this.state.projectsById.get(projectId)!
   }
 
   async setSidebarProjectOrder(projectIds: string[]) {

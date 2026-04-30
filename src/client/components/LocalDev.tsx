@@ -6,19 +6,22 @@ import {
   CodeXml,
   Copy,
   Folder,
+  FolderOpen,
   Loader2,
+  MessageCircle,
   Monitor,
   Plus,
-  SquarePen,
   Terminal,
 } from "lucide-react"
 import { APP_NAME, getCliInvocation, SDK_CLIENT_APP } from "../../shared/branding"
-import { getProjectLocationKey } from "../../shared/project-location"
-import type { LocalProjectSummary, LocalProjectsSnapshot, MachineId } from "../../shared/types"
+import { getProjectLocationKey, LOCAL_MACHINE_ID } from "../../shared/project-location"
+import type { DirectoryBrowserSnapshot, LocalProjectSummary, LocalProjectsSnapshot, MachineId } from "../../shared/types"
 import type { SocketStatus } from "../app/socket"
 import { PageHeader } from "../app/PageHeader"
+import { copyTextToClipboard } from "../lib/clipboard"
 import { getPathBasename } from "../lib/formatters"
 import { cn } from "../lib/utils"
+import { MachineSelector } from "./MachineSelector"
 import { NewProjectModal } from "./NewProjectModal"
 import { Button } from "./ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip"
@@ -30,16 +33,21 @@ interface LocalDevProps {
   startingLocalPath: string | null
   commandError: string | null
   newProjectOpen: boolean
+  selectedMachineId: MachineId
   onNewProjectOpenChange: (open: boolean) => void
+  onSelectMachine: (machineId: MachineId) => void
+  onRenameMachine: (machineId: MachineId, label: string) => Promise<void>
+  onOpenGeneralChat: () => Promise<void>
   onOpenProject: (localPath: string, machineId?: MachineId) => Promise<void>
-  onCreateProject: (project: { mode: "new" | "existing"; localPath: string; title: string }) => Promise<void>
+  onCreateProject: (project: { mode: "new" | "existing"; machineId?: MachineId; localPath: string; title: string }) => Promise<void>
+  onBrowseDirectories: (machineId: MachineId, path?: string) => Promise<DirectoryBrowserSnapshot>
 }
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
 
   async function handleCopy() {
-    await navigator.clipboard.writeText(text)
+    await copyTextToClipboard(text)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -154,7 +162,7 @@ function ProjectCard({
           <Folder className="h-4 w-4 text-muted-foreground flex-shrink-0" />
           <span className="min-w-0 flex-1">
             <span className="block font-medium text-foreground truncate">
-              {getPathBasename(project.localPath)}
+              {project.title.trim() || getPathBasename(project.localPath)}
             </span>
             {isRemote ? (
               <span className="block text-xs text-muted-foreground truncate">
@@ -165,7 +173,7 @@ function ProjectCard({
           {loading ? (
             <Loader2 className="h-4 w-4 text-muted-foreground group-hover:text-primary animate-spin flex-shrink-0" />
           ) : (
-            <SquarePen className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+            <FolderOpen className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
           )}
         </button>
       </TooltipTrigger>
@@ -176,6 +184,36 @@ function ProjectCard({
   )
 }
 
+function GeneralChatCard({
+  loading,
+  onClick,
+}: {
+  loading: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      className={cn(
+        "border border-border hover:border-primary/30 group rounded-lg bg-card px-4 py-3 flex items-center gap-3 w-full text-left hover:bg-muted/50 transition-colors",
+        loading && "opacity-50 cursor-not-allowed"
+      )}
+      disabled={loading}
+      onClick={onClick}
+    >
+      <MessageCircle className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+      <span className="min-w-0 flex-1">
+        <span className="block font-medium text-foreground truncate">General Chat</span>
+        <span className="block text-xs text-muted-foreground truncate">Sem projeto</span>
+      </span>
+      {loading ? (
+        <Loader2 className="h-4 w-4 text-muted-foreground group-hover:text-primary animate-spin flex-shrink-0" />
+      ) : (
+        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+      )}
+    </button>
+  )
+}
+
 export function LocalDev({
   connectionStatus,
   ready,
@@ -183,11 +221,40 @@ export function LocalDev({
   startingLocalPath,
   commandError,
   newProjectOpen,
+  selectedMachineId,
   onNewProjectOpenChange,
+  onSelectMachine,
+  onRenameMachine,
+  onOpenGeneralChat,
   onOpenProject,
   onCreateProject,
+  onBrowseDirectories,
 }: LocalDevProps) {
   const projects = useMemo(() => snapshot?.projects ?? [], [snapshot?.projects])
+  const machines = useMemo(() => {
+    if (snapshot?.machines?.length) return snapshot.machines
+    if (!snapshot) return []
+    return [{
+      id: LOCAL_MACHINE_ID,
+      displayName: snapshot.machine.displayName,
+      platform: snapshot.machine.platform,
+      enabled: true,
+    }]
+  }, [snapshot])
+  const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) ?? machines[0] ?? null
+  const activeMachineId = selectedMachine?.id ?? selectedMachineId
+  const projectCounts = useMemo(() => {
+    const counts = new Map<MachineId, number>()
+    for (const project of projects) {
+      const machineId = project.machineId ?? LOCAL_MACHINE_ID
+      counts.set(machineId, (counts.get(machineId) ?? 0) + 1)
+    }
+    return counts
+  }, [projects])
+  const visibleProjects = useMemo(
+    () => projects.filter((project) => (project.machineId ?? LOCAL_MACHINE_ID) === activeMachineId),
+    [activeMachineId, projects]
+  )
   const isConnecting = connectionStatus === "connecting" || !ready
   const isConnected = connectionStatus === "connected" && ready
 
@@ -273,10 +340,35 @@ export function LocalDev({
         </>
       ) : (
         <>
-          <PageHeader
-            title={snapshot?.machine.displayName ?? "Local Projects"}
-            subtitle={`${APP_NAME} is connected, choose a project below to get started.`}
-          />
+          <div className="w-full px-6 pt-16 mb-10">
+            <div className="flex items-center gap-1 mb-2">
+              {selectedMachine ? (
+                <MachineSelector
+                  machines={machines}
+                  selectedMachineId={activeMachineId}
+                  projectCounts={projectCounts}
+                  onSelectMachine={onSelectMachine}
+                  onRenameMachine={onRenameMachine}
+                  buttonClassName="text-2xl font-semibold"
+                />
+              ) : (
+                <h1 className="text-2xl font-semibold text-foreground">Local Projects</h1>
+              )}
+            </div>
+            <p className="text-muted-foreground">{APP_NAME} is connected, choose a project below to get started.</p>
+          </div>
+
+          <div className="w-full px-6 mb-10">
+            <SectionHeader>Chat</SectionHeader>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4 3xl:grid-cols-5 gap-2">
+              <GeneralChatCard
+                loading={startingLocalPath === "general-chat"}
+                onClick={() => {
+                  void onOpenGeneralChat()
+                }}
+              />
+            </div>
+          </div>
 
           <div className="w-full px-6 mb-10">
             <div className="flex items-baseline justify-between mb-3">
@@ -286,9 +378,9 @@ export function LocalDev({
                 Add Project
               </Button>
             </div>
-            {projects.length > 0 ? (
+            {visibleProjects.length > 0 ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4 3xl:grid-cols-5 gap-2">
-                {projects.map((project) => (
+                {visibleProjects.map((project) => (
                   <ProjectCard
                     key={getProjectLocationKey(project.machineId ?? "local", project.localPath)}
                     project={project}
@@ -302,7 +394,7 @@ export function LocalDev({
             ) : (
               <InfoCard>
                 <p className="text-sm text-muted-foreground">
-                  No local projects discovered yet. Open one with Claude or Codex, or create a new project here.
+                  No projects discovered on {selectedMachine?.displayName ?? "this machine"} yet. Open one with Claude or Codex, or create a new project here.
                 </p>
               </InfoCard>
             )}
@@ -317,9 +409,12 @@ export function LocalDev({
 
       <NewProjectModal
         open={newProjectOpen}
+        machineId={activeMachineId}
+        machineLabel={selectedMachine?.displayName ?? "Local"}
+        onBrowseDirectories={onBrowseDirectories}
         onOpenChange={onNewProjectOpenChange}
         onConfirm={(project) => {
-          void onCreateProject(project)
+          void onCreateProject({ ...project, machineId: activeMachineId })
         }}
       />
 

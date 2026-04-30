@@ -1,4 +1,6 @@
 import type { ServerWebSocket } from "bun"
+import path from "node:path"
+import { readdir, stat } from "node:fs/promises"
 import { PROTOCOL_VERSION } from "../shared/types"
 import type { ClientEnvelope, ServerEnvelope, SubscriptionTopic } from "../shared/protocol"
 import { isClientEnvelope } from "../shared/protocol"
@@ -9,18 +11,43 @@ import type { AppSettingsManager } from "./app-settings"
 import type { DiscoveredProject } from "./discovery"
 import { DiffStore } from "./diff-store"
 import { EventStore } from "./event-store"
-import { openExternal } from "./external-open"
+import { openExternal, openExternalOnRemote } from "./external-open"
 import { KeybindingsManager } from "./keybindings"
 import { ensureProjectDirectory, resolveLocalPath } from "./paths"
 import { getProjectLocationKey, LOCAL_MACHINE_ID, normalizeMachineId } from "../shared/project-location"
-import { ensureRemoteProjectDirectory, resolveProjectRuntime, verifyRemoteProjectDirectory } from "./remote-hosts"
+import { ensureRemoteProjectDirectory, remotePathExpression, resolveProjectRuntime, runSsh, shellQuote, verifyRemoteProjectDirectory } from "./remote-hosts"
 import { writeStandaloneTranscriptExport } from "./standalone-export"
 import { TerminalManager } from "./terminal-manager"
 import type { UpdateManager } from "./update-manager"
 import { deriveChatSnapshot, deriveLocalProjectsSnapshot, deriveSidebarData } from "./read-models"
-import type { AppSettingsPatch, AppSettingsSnapshot, LlmProviderSnapshot, LlmProviderValidationResult } from "../shared/types"
+import type { AppSettingsPatch, AppSettingsSnapshot, DirectoryBrowserEntry, DirectoryBrowserSnapshot, LlmProviderSnapshot, LlmProviderValidationResult, MachineId, ProjectFileTreeEntry, ProjectFileTreeSnapshot, RemoteHostConfig } from "../shared/types"
 
 const DEFAULT_CHAT_RECENT_LIMIT = 200
+const PROJECT_FILE_TREE_MAX_ENTRIES = 2_500
+const PROJECT_FILE_TREE_MAX_DEPTH = 8
+const PROJECT_FILE_TREE_IGNORED_DIRS = new Set([
+  ".git",
+  ".hg",
+  ".svn",
+  ".next",
+  ".nuxt",
+  ".turbo",
+  ".cache",
+  ".parcel-cache",
+  ".vite",
+  ".kanna",
+  ".kanna-dev",
+  ".codex",
+  ".claude",
+  "node_modules",
+  "dist",
+  "build",
+  "coverage",
+  "target",
+  ".venv",
+  "venv",
+  "__pycache__",
+])
 
 function isSendToStartingProfilingEnabled() {
   return process.env.KANNA_PROFILE_SEND_TO_STARTING === "1"
@@ -42,6 +69,356 @@ function logSendToStartingProfile(
     elapsedMs: Number((performance.now() - startedAt).toFixed(1)),
     ...details,
   }))
+}
+
+async function isDirectory(filePath: string) {
+  try {
+    return (await stat(filePath)).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+async function listLocalDirectories(pathValue?: string): Promise<DirectoryBrowserSnapshot> {
+  const requestedPath = pathValue?.trim() || "~"
+  const resolvedPath = resolveLocalPath(requestedPath)
+  const info = await stat(resolvedPath)
+  if (!info.isDirectory()) {
+    throw new Error(`Not a directory: ${requestedPath}`)
+  }
+
+  const entries = await readdir(resolvedPath, { withFileTypes: true })
+  const directories: DirectoryBrowserEntry[] = []
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const entryPath = path.join(resolvedPath, entry.name)
+    directories.push({
+      name: entry.name,
+      path: entryPath,
+      isGitRepository: await isDirectory(path.join(entryPath, ".git")),
+    })
+  }
+
+  directories.sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }))
+  const parentPath = path.dirname(resolvedPath)
+  return {
+    machineId: LOCAL_MACHINE_ID,
+    path: resolvedPath,
+    parentPath: parentPath === resolvedPath ? null : parentPath,
+    entries: directories,
+  }
+}
+
+function parseRemoteDirectoryListing(machineId: MachineId, stdout: string): DirectoryBrowserSnapshot {
+  const tokens = stdout.split("\0")
+  if (tokens[0] !== "BASE" || !tokens[1]) {
+    throw new Error("Remote directory listing returned an invalid response")
+  }
+
+  const entries: DirectoryBrowserEntry[] = []
+  for (let index = 3; index < tokens.length; index += 4) {
+    if (tokens[index] !== "ENTRY") continue
+    const name = tokens[index + 1]
+    const entryPath = tokens[index + 2]
+    const gitFlag = tokens[index + 3]
+    if (!name || !entryPath) continue
+    entries.push({
+      name,
+      path: entryPath,
+      isGitRepository: gitFlag === "1",
+    })
+  }
+
+  entries.sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }))
+  return {
+    machineId,
+    path: tokens[1],
+    parentPath: tokens[2] && tokens[2] !== tokens[1] ? tokens[2] : null,
+    entries,
+  }
+}
+
+async function listRemoteDirectories(machineId: MachineId, host: RemoteHostConfig, pathValue?: string): Promise<DirectoryBrowserSnapshot> {
+  const requestedPath = pathValue?.trim() || "~"
+  const command = [
+    `base=${remotePathExpression(requestedPath)}`,
+    `[ -d "$base" ] || { echo "Directory not found: $base" >&2; exit 2; }`,
+    `base=$(cd "$base" && pwd -P) || exit 2`,
+    `parent=$(dirname "$base")`,
+    `printf 'BASE\\0%s\\0%s\\0' "$base" "$parent"`,
+    `for entry in "$base"/* "$base"/.[!.]* "$base"/..?*; do`,
+    `  [ -d "$entry" ] || continue`,
+    `  name=\${entry##*/}`,
+    `  case "$name" in .|..) continue ;; esac`,
+    `  git=0`,
+    `  [ -d "$entry/.git" ] && git=1`,
+    `  resolved=$(cd "$entry" && pwd -P) || continue`,
+    `  printf 'ENTRY\\0%s\\0%s\\0%s\\0' "$name" "$resolved" "$git"`,
+    `done`,
+  ].join("\n")
+  const result = await runSsh(host, command, 10_000)
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.trim() || `Failed to list directories on ${host.label}`)
+  }
+  return parseRemoteDirectoryListing(machineId, result.stdout)
+}
+
+function shouldIgnoreProjectFileDirectory(name: string) {
+  return PROJECT_FILE_TREE_IGNORED_DIRS.has(name)
+}
+
+function toProjectRelativePath(relativePath: string) {
+  return relativePath.split(path.sep).join("/")
+}
+
+function createProjectFileTreeEntry(args: {
+  name: string
+  relativePath: string
+  absolutePath: string
+  kind: ProjectFileTreeEntry["kind"]
+  depth: number
+  size?: number
+  modifiedAt?: number
+}): ProjectFileTreeEntry {
+  return {
+    name: args.name,
+    path: toProjectRelativePath(args.relativePath),
+    absolutePath: args.absolutePath,
+    kind: args.kind,
+    depth: args.depth,
+    ...(args.size !== undefined ? { size: args.size } : {}),
+    ...(args.modifiedAt !== undefined ? { modifiedAt: args.modifiedAt } : {}),
+  }
+}
+
+async function listLocalProjectFiles(projectId: string, machineId: MachineId, localPath: string): Promise<ProjectFileTreeSnapshot> {
+  const resolvedRoot = resolveLocalPath(localPath)
+  const rootInfo = await stat(resolvedRoot)
+  if (!rootInfo.isDirectory()) {
+    throw new Error(`Not a directory: ${localPath}`)
+  }
+
+  const entries: ProjectFileTreeEntry[] = []
+  let truncated = false
+
+  async function walk(currentDir: string, relativeDir: string, depth: number): Promise<void> {
+    if (entries.length >= PROJECT_FILE_TREE_MAX_ENTRIES) {
+      truncated = true
+      return
+    }
+
+    let children
+    try {
+      children = await readdir(currentDir, { withFileTypes: true })
+    } catch {
+      return
+    }
+
+    children.sort((left, right) => {
+      const leftDirectory = left.isDirectory()
+      const rightDirectory = right.isDirectory()
+      if (leftDirectory !== rightDirectory) return leftDirectory ? -1 : 1
+      return left.name.localeCompare(right.name, undefined, { sensitivity: "base" })
+    })
+
+    for (const child of children) {
+      if (entries.length >= PROJECT_FILE_TREE_MAX_ENTRIES) {
+        truncated = true
+        return
+      }
+      if (child.name === "." || child.name === ".." || child.isSymbolicLink()) continue
+      if (child.isDirectory() && shouldIgnoreProjectFileDirectory(child.name)) continue
+
+      const absolutePath = path.join(currentDir, child.name)
+      const relativePath = relativeDir ? path.join(relativeDir, child.name) : child.name
+      let info
+      try {
+        info = await stat(absolutePath)
+      } catch {
+        continue
+      }
+
+      if (info.isDirectory()) {
+        entries.push(createProjectFileTreeEntry({
+          name: child.name,
+          relativePath,
+          absolutePath,
+          kind: "directory",
+          depth,
+          modifiedAt: info.mtimeMs,
+        }))
+        if (depth < PROJECT_FILE_TREE_MAX_DEPTH) {
+          await walk(absolutePath, relativePath, depth + 1)
+        } else {
+          truncated = true
+        }
+        continue
+      }
+
+      if (!info.isFile()) continue
+      entries.push(createProjectFileTreeEntry({
+        name: child.name,
+        relativePath,
+        absolutePath,
+        kind: "file",
+        depth,
+        size: info.size,
+        modifiedAt: info.mtimeMs,
+      }))
+    }
+  }
+
+  await walk(resolvedRoot, "", 0)
+
+  return {
+    projectId,
+    machineId,
+    localPath: resolvedRoot,
+    entries,
+    truncated,
+  }
+}
+
+function getRemoteProjectFilesScript() {
+  return String.raw`const fs = require("node:fs");
+const path = require("node:path");
+
+const ignoredDirs = new Set(${JSON.stringify([...PROJECT_FILE_TREE_IGNORED_DIRS])});
+const maxEntries = ${PROJECT_FILE_TREE_MAX_ENTRIES};
+const maxDepth = ${PROJECT_FILE_TREE_MAX_DEPTH};
+const root = process.cwd();
+const isWin = process.platform === "win32";
+const entries = [];
+let truncated = false;
+
+function toRemotePath(nativePath) {
+  let resolved = String(nativePath);
+  try {
+    resolved = fs.realpathSync(nativePath);
+  } catch {
+    resolved = path.resolve(nativePath);
+  }
+  if (isWin) {
+    const match = resolved.match(/^([a-zA-Z]):[\\/]?(.*)$/);
+    if (match) {
+      const rest = match[2].replace(/[\\/]+/g, "/");
+      return "/" + match[1].toLowerCase() + (rest ? "/" + rest : "");
+    }
+  }
+  return resolved.replace(/\\/g, "/");
+}
+
+function pushEntry(entry) {
+  if (entries.length >= maxEntries) {
+    truncated = true;
+    return false;
+  }
+  entries.push(entry);
+  return true;
+}
+
+function walk(currentDir, relativeDir, depth) {
+  if (entries.length >= maxEntries) {
+    truncated = true;
+    return;
+  }
+
+  let children = [];
+  try {
+    children = fs.readdirSync(currentDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  children.sort((left, right) => {
+    const leftDirectory = left.isDirectory();
+    const rightDirectory = right.isDirectory();
+    if (leftDirectory !== rightDirectory) return leftDirectory ? -1 : 1;
+    return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+  });
+
+  for (const child of children) {
+    if (entries.length >= maxEntries) {
+      truncated = true;
+      return;
+    }
+    if (child.name === "." || child.name === ".." || child.isSymbolicLink()) continue;
+    if (child.isDirectory() && ignoredDirs.has(child.name)) continue;
+
+    const absolutePath = path.join(currentDir, child.name);
+    const relativePath = (relativeDir ? path.posix.join(relativeDir, child.name) : child.name).replace(/\\/g, "/");
+    let info;
+    try {
+      info = fs.statSync(absolutePath);
+    } catch {
+      continue;
+    }
+
+    if (info.isDirectory()) {
+      if (!pushEntry({
+        name: child.name,
+        path: relativePath,
+        absolutePath: toRemotePath(absolutePath),
+        kind: "directory",
+        depth,
+        modifiedAt: info.mtimeMs,
+      })) return;
+      if (depth < maxDepth) {
+        walk(absolutePath, relativePath, depth + 1);
+      } else {
+        truncated = true;
+      }
+      continue;
+    }
+
+    if (!info.isFile()) continue;
+    if (!pushEntry({
+      name: child.name,
+      path: relativePath,
+      absolutePath: toRemotePath(absolutePath),
+      kind: "file",
+      depth,
+      size: info.size,
+      modifiedAt: info.mtimeMs,
+    })) return;
+  }
+}
+
+walk(root, "", 0);
+console.log(JSON.stringify({
+  rootPath: toRemotePath(root),
+  entries,
+  truncated,
+}));`
+}
+
+async function listRemoteProjectFiles(projectId: string, machineId: MachineId, host: RemoteHostConfig, localPath: string): Promise<ProjectFileTreeSnapshot> {
+  const command = [
+    `cd ${remotePathExpression(localPath)}`,
+    `node -e ${shellQuote(getRemoteProjectFilesScript())}`,
+  ].join(" && ")
+  const result = await runSsh(host, command, 15_000)
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.trim() || `Failed to list files on ${host.label}`)
+  }
+
+  const payload = result.stdout.trim().split("\n").at(-1)
+  if (!payload) {
+    throw new Error(`Remote file listing returned an empty response from ${host.label}`)
+  }
+  const parsed = JSON.parse(payload) as {
+    rootPath?: string
+    entries?: ProjectFileTreeEntry[]
+    truncated?: boolean
+  }
+
+  return {
+    projectId,
+    machineId,
+    localPath: parsed.rootPath || localPath,
+    entries: Array.isArray(parsed.entries) ? parsed.entries : [],
+    truncated: Boolean(parsed.truncated),
+  }
 }
 
 function countSubscriptionsByTopic(ws: ServerWebSocket<ClientState>) {
@@ -248,6 +625,7 @@ export function createWsRouter({
       preset: "cursor",
       commandTemplate: "cursor {path}",
     },
+    machineAliases: {},
     remoteHosts: [],
     defaultProvider: "last_used",
     providerDefaults: {
@@ -282,6 +660,7 @@ export function createWsRouter({
       ...snapshot.editor,
       ...patch.editor,
     },
+    machineAliases: patch.machineAliases ?? snapshot.machineAliases ?? {},
     remoteHosts: patch.remoteHosts ?? snapshot.remoteHosts ?? [],
     providerDefaults: {
       claude: {
@@ -416,6 +795,7 @@ export function createWsRouter({
       drainingChatIds: agent.getDrainingChatIds(),
       remoteHosts: settings.remoteHosts ?? [],
       localMachineName: machineDisplayName,
+      machineAliases: settings.machineAliases ?? {},
     })
     if (isSendToStartingProfilingEnabled()) {
       const totalChats = data.projectGroups.reduce((count, group) => count + group.chats.length, 0)
@@ -460,7 +840,14 @@ export function createWsRouter({
 
     if (topic.type === "local-projects") {
       const discoveredProjects = getDiscoveredProjects()
-      const data = deriveLocalProjectsSnapshot(store.state, discoveredProjects, machineDisplayName, resolvedAppSettings.getSnapshot().remoteHosts ?? [])
+      const settings = resolvedAppSettings.getSnapshot()
+      const data = deriveLocalProjectsSnapshot(
+        store.state,
+        discoveredProjects,
+        machineDisplayName,
+        settings.remoteHosts ?? [],
+        settings.machineAliases ?? {}
+      )
 
       return {
         v: PROTOCOL_VERSION,
@@ -562,6 +949,7 @@ export function createWsRouter({
           {
             remoteHosts: resolvedAppSettings.getSnapshot().remoteHosts ?? [],
             localMachineName: machineDisplayName,
+            machineAliases: resolvedAppSettings.getSnapshot().machineAliases ?? {},
           }
         ),
       },
@@ -845,6 +1233,29 @@ export function createWsRouter({
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id })
           return
         }
+        case "filesystem.listDirectories": {
+          const machineId = normalizeMachineId(command.machineId)
+          const snapshot = machineId === LOCAL_MACHINE_ID
+            ? await listLocalDirectories(command.path)
+            : await listRemoteDirectories(machineId, resolveSshHost(machineId), command.path)
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result: snapshot })
+          return
+        }
+        case "filesystem.listProjectFiles": {
+          const project = store.getProject(command.projectId)
+          if (!project) {
+            throw new Error("Project not found")
+          }
+          if (project.isGeneralChat) {
+            throw new Error("Files are only available for projects")
+          }
+          const machineId = normalizeMachineId(project.machineId)
+          const snapshot = machineId === LOCAL_MACHINE_ID
+            ? await listLocalProjectFiles(project.id, machineId, project.localPath)
+            : await listRemoteProjectFiles(project.id, machineId, resolveSshHost(machineId), project.localPath)
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result: snapshot })
+          return
+        }
         case "update.check": {
           const snapshot = updateManager
             ? await updateManager.checkForUpdates({ force: command.force })
@@ -976,6 +1387,12 @@ export function createWsRouter({
           resolvedAnalytics.track("project_removed")
           break
         }
+        case "project.rename": {
+          await store.renameProject(command.projectId, command.title)
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id })
+          await broadcastFilteredSnapshots({ includeSidebar: true, includeLocalProjects: true })
+          return
+        }
         case "sidebar.reorderProjectGroups": {
           await store.setSidebarProjectOrder(command.projectIds)
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id })
@@ -995,13 +1412,26 @@ export function createWsRouter({
           return
         }
         case "system.openExternal": {
-          await openExternal(command)
+          const runtime = resolveProjectRuntime(normalizeMachineId(command.machineId), resolvedAppSettings.getSnapshot().remoteHosts ?? [])
+          if (runtime.kind === "ssh") {
+            await openExternalOnRemote(runtime.host, command)
+          } else {
+            await openExternal(command)
+          }
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id })
           break
         }
         case "chat.create": {
           const chat = await store.createChat(command.projectId)
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result: { chatId: chat.id } })
+          resolvedAnalytics.track("chat_created")
+          await broadcastChatAndSidebar(chat.id)
+          return
+        }
+        case "chat.createGeneral": {
+          const project = await store.ensureGeneralChatProject()
+          const chat = await store.createChat(project.id)
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result: { chatId: chat.id, projectId: project.id } })
           resolvedAnalytics.track("chat_created")
           await broadcastChatAndSidebar(chat.id)
           return

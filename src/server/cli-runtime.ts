@@ -1,7 +1,6 @@
 import process from "node:process"
-import { spawnSync } from "node:child_process"
-import { hasCommand, spawnDetached } from "./process-utils"
-import { APP_NAME, CLI_COMMAND, getDataDirDisplay, LOG_PREFIX, PACKAGE_NAME } from "../shared/branding"
+import { spawnDetached } from "./process-utils"
+import { APP_NAME, CLI_COMMAND, getDataDirDisplay, LOG_PREFIX } from "../shared/branding"
 import type { ShareMode } from "../shared/share"
 import { assertNoHostOverride, getShareCliFlag, isShareEnabled, isTokenShareMode } from "../shared/share"
 import type { UpdateInstallErrorCode } from "../shared/types"
@@ -47,7 +46,7 @@ export interface CliRuntimeDeps {
   version: string
   bunVersion: string
   startServer: (options: CliOptions & {
-    update: CliUpdateOptions
+    update?: CliUpdateOptions
     onMigrationProgress?: (message: string) => void
     trustProxy?: boolean
   }) => Promise<{ port: number; stop: () => Promise<void> }>
@@ -212,40 +211,9 @@ function normalizeVersion(version: string) {
 }
 
 async function maybeSelfUpdate(_argv: string[], deps: CliRuntimeDeps) {
-  if (process.env.KANNA_DISABLE_SELF_UPDATE === "1") {
-    return null
-  }
-
-  deps.log(`${LOG_PREFIX} checking for updates`)
-
-  let latestVersion: string
-  try {
-    latestVersion = await deps.fetchLatestVersion(PACKAGE_NAME)
-  }
-  catch (error) {
-    deps.warn(`${LOG_PREFIX} update check failed, continuing current version`)
-    if (error instanceof Error && error.message) {
-      deps.warn(`${LOG_PREFIX} ${error.message}`)
-    }
-    return null
-  }
-
-  if (!latestVersion || compareVersions(deps.version, latestVersion) >= 0) {
-    return null
-  }
-
-  deps.log(`${LOG_PREFIX} installing ${PACKAGE_NAME}@${latestVersion}`)
-  const installResult = deps.installVersion(PACKAGE_NAME, latestVersion)
-  if (!installResult.ok) {
-    deps.warn(`${LOG_PREFIX} update failed, continuing current version`)
-    if (installResult.userMessage) {
-      deps.warn(`${LOG_PREFIX} ${installResult.userMessage}`)
-    }
-    return null
-  }
-
-  deps.log(`${LOG_PREFIX} restarting into updated version`)
-  return "startup_update"
+  void _argv
+  void deps
+  return null
 }
 
 export async function runCli(argv: string[], deps: CliRuntimeDeps): Promise<CliRunResult> {
@@ -273,13 +241,6 @@ export async function runCli(argv: string[], deps: CliRuntimeDeps): Promise<CliR
     ...parsedArgs.options,
     trustProxy: isShareEnabled(parsedArgs.options.share),
     onMigrationProgress: deps.log,
-    update: {
-      version: deps.version,
-      fetchLatestVersion: deps.fetchLatestVersion,
-      installVersion: deps.installVersion,
-      argv,
-      command: CLI_COMMAND,
-    },
   })
   const bindHost = parsedArgs.options.host
   const displayHost = isShareEnabled(parsedArgs.options.share) || bindHost === "127.0.0.1" || bindHost === "0.0.0.0" ? "localhost" : bindHost
@@ -341,18 +302,9 @@ export function openUrl(url: string) {
   console.log(`${LOG_PREFIX} opened in default browser`)
 }
 
-export async function fetchLatestPackageVersion(packageName: string) {
-  const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`)
-  if (!response.ok) {
-    throw new Error(`registry returned ${response.status}`)
-  }
-
-  const payload = await response.json() as { version?: unknown }
-  if (typeof payload.version !== "string" || !payload.version.trim()) {
-    throw new Error("registry response did not include a version")
-  }
-
-  return payload.version
+export async function fetchLatestPackageVersion(packageName: string): Promise<string> {
+  void packageName
+  throw new Error("Self-update checks are disabled in this fork.")
 }
 
 export function classifyInstallVersionFailure(output: string): UpdateInstallAttemptResult {
@@ -375,31 +327,12 @@ export function classifyInstallVersionFailure(output: string): UpdateInstallAtte
 }
 
 export function installPackageVersion(packageName: string, version: string) {
-  if (!hasCommand("bun")) {
-    return {
-      ok: false,
-      errorCode: "command_missing",
-      userTitle: "Bun not found",
-      userMessage: "Kanna could not find Bun to install the update.",
-    } satisfies UpdateInstallAttemptResult
-  }
-
-  const result = spawnSync("bun", ["install", "-g", `${packageName}@${version}`], {
-    stdio: ["ignore", "pipe", "pipe"],
-    encoding: "utf8",
-  })
-  const stdout = result.stdout ?? ""
-  const stderr = result.stderr ?? ""
-  if (stdout) process.stdout.write(stdout)
-  if (stderr) process.stderr.write(stderr)
-  if (result.status === 0) {
-    return {
-      ok: true,
-      errorCode: null,
-      userTitle: null,
-      userMessage: null,
-    } satisfies UpdateInstallAttemptResult
-  }
-
-  return classifyInstallVersionFailure(`${stdout}\n${stderr}`)
+  void packageName
+  void version
+  return {
+    ok: false,
+    errorCode: "install_failed",
+    userTitle: "Update disabled",
+    userMessage: "Self-update installs are disabled in this fork.",
+  } satisfies UpdateInstallAttemptResult
 }

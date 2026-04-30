@@ -21,7 +21,7 @@ import {
 import { CSS } from "@dnd-kit/utilities"
 import { Button } from "../../ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip"
-import type { SidebarChatRow, SidebarProjectGroup } from "../../../../shared/types"
+import type { MachineId, SidebarChatRow, SidebarProjectGroup } from "../../../../shared/types"
 import { APP_NAME } from "../../../../shared/branding"
 import { getPathBasename } from "../../../lib/formatters"
 import { cn } from "../../../lib/utils"
@@ -36,9 +36,10 @@ interface Props {
   onToggleExpandedGroup: (key: string) => void
   renderChatRow: (chat: SidebarChatRow) => ReactNode
   onShowArchivedProject?: (projectId: string) => void
-  onNewLocalChat?: (localPath: string) => void
+  onNewLocalChat?: (projectId: string) => void
+  onRenameProject?: (projectId: string, currentTitle: string) => void
   onCopyPath?: (localPath: string) => void
-  onOpenExternalPath?: (action: "open_finder" | "open_editor", localPath: string) => void
+  onOpenExternalPath?: (action: "open_finder" | "open_editor", localPath: string, machineId?: MachineId) => void
   onHideProject?: (projectId: string) => void
   onReorderGroups?: (newOrder: string[]) => void
   isConnected?: boolean
@@ -54,9 +55,10 @@ interface SortableProjectGroupProps {
   onToggleExpandedGroup: (key: string) => void
   renderChatRow: (chat: SidebarChatRow) => ReactNode
   onShowArchivedProject?: (projectId: string) => void
-  onNewLocalChat?: (localPath: string) => void
+  onNewLocalChat?: (projectId: string) => void
+  onRenameProject?: (projectId: string, currentTitle: string) => void
   onCopyPath?: (localPath: string) => void
-  onOpenExternalPath?: (action: "open_finder" | "open_editor", localPath: string) => void
+  onOpenExternalPath?: (action: "open_finder" | "open_editor", localPath: string, machineId?: MachineId) => void
   onHideProject?: (projectId: string) => void
   isConnected?: boolean
   startingLocalPath?: string | null
@@ -86,13 +88,15 @@ function getRectCenterY(rect: Pick<ClientRect, "top" | "height">) {
 }
 
 function EmptyProjectChatButton({
+  projectId,
   localPath,
   onNewLocalChat,
   isConnected,
   startingLocalPath,
 }: {
+  projectId: string
   localPath: string
-  onNewLocalChat: (localPath: string) => void
+  onNewLocalChat: (projectId: string) => void
   isConnected?: boolean
   startingLocalPath?: string | null
 }) {
@@ -102,20 +106,27 @@ function EmptyProjectChatButton({
     <button
       type="button"
       disabled={disabled}
-      title={!isConnected ? `Start ${APP_NAME} to connect` : "New Chat"}
+      title={!isConnected ? `Start ${APP_NAME} to connect` : "Create session"}
       className={cn(
         "group flex w-full items-center gap-2 pl-2.5 pr-0.5 py-0.5 rounded-lg text-left cursor-pointer border-border/0 hover:border-border hover:bg-muted/20 active:scale-[0.985] border transition-all",
         "border-border/0 dark:hover:border-slate-400/10",
         disabled && "cursor-not-allowed opacity-50 active:scale-100"
       )}
-      onClick={() => onNewLocalChat(localPath)}
+      onClick={() => onNewLocalChat(projectId)}
     >
       <span className="text-sm truncate flex-1 translate-y-[-0.5px] text-slate-500 dark:text-slate-400">
-        New Chat
+        Create Session
       </span>
       <div className="h-7 w-6 mr-[2px] shrink-0" aria-hidden />
     </button>
   )
+}
+
+function getProjectDisplayTitle(group: SidebarProjectGroup, title: string) {
+  if (group.isGeneralChat) return title
+  const machineLabel = group.machineLabel?.trim()
+  if (!machineLabel) return title
+  return `${machineLabel} / ${title}`
 }
 
 export function getProjectGroupReorderPreviewTargetId({
@@ -174,6 +185,7 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
   renderChatRow,
   onShowArchivedProject,
   onNewLocalChat,
+  onRenameProject,
   onCopyPath,
   onOpenExternalPath,
   onHideProject,
@@ -181,10 +193,12 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
   startingLocalPath,
 }: SortableProjectGroupProps) {
   const { groupKey, localPath } = group
+  const title = group.title?.trim() || getPathBasename(localPath)
+  const displayTitle = getProjectDisplayTitle(group, title)
   const isExpanded = expandedGroups.has(groupKey)
   const isEmptyProject = group.chats.length === 0
   const hasMore = group.olderChats.length > 0
-  const hasProjectMenu = Boolean(onHideProject && onCopyPath && onOpenExternalPath)
+  const hasProjectMenu = Boolean(!group.isGeneralChat && onHideProject && onCopyPath && onOpenExternalPath)
 
   const {
     attributes,
@@ -227,12 +241,15 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
         </span>
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="truncate max-w-[150px] whitespace-nowrap text-sm ">
-              {getPathBasename(localPath)}
+            <span className="truncate max-w-[150px] whitespace-nowrap text-sm">
+              {displayTitle}
             </span>
           </TooltipTrigger>
           <TooltipContent side="right" sideOffset={4}>
-            {localPath}
+            <div className="max-w-[280px]">
+              <div className="font-medium">{displayTitle}</div>
+              <div className="truncate text-muted-foreground">{group.isGeneralChat ? "General chat" : localPath}</div>
+            </div>
           </TooltipContent>
         </Tooltip>
       </div>
@@ -266,9 +283,10 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
                     (!isConnected || startingLocalPath === localPath) && "opacity-50 cursor-not-allowed"
                   )}
                   disabled={!isConnected || startingLocalPath === localPath}
+                  title={!isConnected ? `Start ${APP_NAME} to connect` : "Create session"}
                   onClick={(event) => {
                     event.stopPropagation()
-                    onNewLocalChat(localPath)
+                    onNewLocalChat(groupKey)
                   }}
                 >
                   {startingLocalPath === localPath ? (
@@ -279,7 +297,7 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right" sideOffset={4}>
-                {!isConnected ? `Start ${APP_NAME} to connect` : "New Chat"}
+                {!isConnected ? `Start ${APP_NAME} to connect` : "Create session"}
               </TooltipContent>
             </Tooltip>
           ) : null}
@@ -301,10 +319,11 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
       {hasProjectMenu ? (
         <ProjectSectionMenu
           editorLabel={editorLabel}
+          onRename={() => onRenameProject?.(groupKey, title)}
           onCopyPath={() => onCopyPath?.(localPath)}
           onShowArchived={() => onShowArchivedProject?.(groupKey)}
-          onOpenInFinder={() => onOpenExternalPath?.("open_finder", localPath)}
-          onOpenInEditor={() => onOpenExternalPath?.("open_editor", localPath)}
+          onOpenInFinder={() => onOpenExternalPath?.("open_finder", localPath, group.machineId)}
+          onOpenInEditor={() => onOpenExternalPath?.("open_editor", localPath, group.machineId)}
           onHide={() => onHideProject?.(groupKey)}
         >
           {header}
@@ -315,6 +334,7 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
         <div className="space-y-[2px] mb-2 ">
           {isEmptyProject && onNewLocalChat ? (
             <EmptyProjectChatButton
+              projectId={groupKey}
               localPath={localPath}
               onNewLocalChat={onNewLocalChat}
               isConnected={isConnected}
@@ -358,6 +378,7 @@ const LocalProjectsSectionImpl = function LocalProjectsSection({
   renderChatRow,
   onShowArchivedProject,
   onNewLocalChat,
+  onRenameProject,
   onCopyPath,
   onOpenExternalPath,
   onHideProject,
@@ -438,6 +459,7 @@ const LocalProjectsSectionImpl = function LocalProjectsSection({
           renderChatRow={renderChatRow}
           onShowArchivedProject={onShowArchivedProject}
           onNewLocalChat={onNewLocalChat}
+          onRenameProject={onRenameProject}
           onCopyPath={onCopyPath}
           onOpenExternalPath={onOpenExternalPath}
           onHideProject={onHideProject}

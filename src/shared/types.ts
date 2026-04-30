@@ -322,6 +322,7 @@ export interface ProjectSummary {
   machineId?: MachineId
   localPath: string
   title: string
+  isGeneralChat?: boolean
   createdAt: number
   updatedAt: number
 }
@@ -335,6 +336,7 @@ export interface SidebarChatRow {
   unread: boolean
   machineId?: MachineId
   machineLabel?: string
+  isGeneralChat?: boolean
   localPath: string
   provider: AgentProvider | null
   lastMessageAt?: number
@@ -346,7 +348,9 @@ export interface SidebarProjectGroup {
   groupKey: string
   machineId?: MachineId
   machineLabel?: string
+  isGeneralChat?: boolean
   localPath: string
+  title?: string
   chats: SidebarChatRow[]
   previewChats: SidebarChatRow[]
   olderChats: SidebarChatRow[]
@@ -376,9 +380,43 @@ export interface MachineSummary {
   enabled?: boolean
 }
 
+export interface DirectoryBrowserEntry {
+  name: string
+  path: string
+  isGitRepository: boolean
+}
+
+export interface DirectoryBrowserSnapshot {
+  machineId: MachineId
+  path: string
+  parentPath: string | null
+  entries: DirectoryBrowserEntry[]
+}
+
+export interface ProjectFileTreeEntry {
+  name: string
+  path: string
+  absolutePath: string
+  kind: "directory" | "file"
+  depth: number
+  size?: number
+  modifiedAt?: number
+}
+
+export interface ProjectFileTreeSnapshot {
+  projectId: string
+  machineId: MachineId
+  localPath: string
+  entries: ProjectFileTreeEntry[]
+  truncated: boolean
+}
+
+export type MachineAliases = Partial<Record<MachineId, string>>
+
 export interface LocalProjectSummary {
   machineId?: MachineId
   machineLabel?: string
+  isGeneralChat?: boolean
   localPath: string
   title: string
   source: "saved" | "discovered"
@@ -410,6 +448,7 @@ export interface AppSettingsSnapshot {
     preset: EditorPreset
     commandTemplate: string
   }
+  machineAliases?: MachineAliases
   remoteHosts?: RemoteHostConfig[]
   defaultProvider: DefaultProviderPreference
   providerDefaults: ChatProviderPreferences
@@ -425,6 +464,7 @@ export interface AppSettingsPatch {
   chatSoundId?: ChatSoundId
   terminal?: Partial<AppSettingsSnapshot["terminal"]>
   editor?: Partial<AppSettingsSnapshot["editor"]>
+  machineAliases?: MachineAliases
   remoteHosts?: RemoteHostConfig[]
   defaultProvider?: DefaultProviderPreference
   providerDefaults?: {
@@ -1017,6 +1057,7 @@ export interface ChatRuntime {
   projectId: string
   machineId?: MachineId
   machineLabel?: string
+  isGeneralChat?: boolean
   localPath: string
   title: string
   status: KannaStatus

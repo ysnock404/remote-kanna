@@ -1,4 +1,4 @@
-import type { ReactNode } from "react"
+import { type ReactNode, useCallback, useRef } from "react"
 import { Archive, Code, Copy, EyeOff, FolderOpen, Pencil, Split, Trash2, UserRoundPlus } from "lucide-react"
 import {
   ContextMenu,
@@ -9,6 +9,7 @@ import {
 
 export function ProjectSectionMenu({
   editorLabel,
+  onRename,
   onCopyPath,
   onShowArchived,
   onOpenInFinder,
@@ -17,6 +18,7 @@ export function ProjectSectionMenu({
   children,
 }: {
   editorLabel: string
+  onRename: () => void
   onCopyPath: () => void
   onShowArchived: () => void
   onOpenInFinder: () => void
@@ -24,6 +26,15 @@ export function ProjectSectionMenu({
   onHide: () => void
   children: ReactNode
 }) {
+  const lastCopyAttemptAtRef = useRef(0)
+  const invokeCopyPath = useCallback((source: string) => {
+    const now = Date.now()
+    if (now - lastCopyAttemptAtRef.current < 500) return
+    lastCopyAttemptAtRef.current = now
+    console.log(`[kanna] Copy Path selected via ${source}`)
+    onCopyPath()
+  }, [onCopyPath])
+
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -33,7 +44,20 @@ export function ProjectSectionMenu({
         <ContextMenuItem
           onSelect={(event) => {
             event.stopPropagation()
-            onCopyPath()
+            onRename()
+          }}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">Rename Project</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onClickCapture={(event) => {
+            event.stopPropagation()
+            invokeCopyPath("click")
+          }}
+          onSelect={(event) => {
+            event.stopPropagation()
+            invokeCopyPath("select")
           }}
         >
           <Copy className="h-3.5 w-3.5" />
@@ -82,6 +106,7 @@ export function ProjectSectionMenu({
 
 export function ChatRowMenu({
   canFork,
+  showOpenInFinder = true,
   onRename,
   onShare,
   onOpenInFinder,
@@ -91,6 +116,7 @@ export function ChatRowMenu({
   children,
 }: {
   canFork?: boolean
+  showOpenInFinder?: boolean
   onRename: () => void
   onShare: () => void
   onOpenInFinder: () => void
@@ -123,15 +149,17 @@ export function ChatRowMenu({
           <UserRoundPlus className="h-3.5 w-3.5" />
           <span className="text-xs font-medium">Share</span>
         </ContextMenuItem>
-        <ContextMenuItem
-          onSelect={(event) => {
-            event.preventDefault()
-            onOpenInFinder()
-          }}
-        >
-          <FolderOpen className="h-3.5 w-3.5" />
-          <span className="text-xs font-medium">Open in Finder</span>
-        </ContextMenuItem>
+        {showOpenInFinder ? (
+          <ContextMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
+              onOpenInFinder()
+            }}
+          >
+            <FolderOpen className="h-3.5 w-3.5" />
+            <span className="text-xs font-medium">Open in Finder</span>
+          </ContextMenuItem>
+        ) : null}
         <ContextMenuItem
           disabled={!canFork}
           onSelect={(event) => {

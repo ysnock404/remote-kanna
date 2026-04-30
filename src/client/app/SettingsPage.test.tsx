@@ -21,7 +21,7 @@ const SAMPLE_RELEASES = [
     id: 1,
     name: "v0.8.1",
     tag_name: "v0.8.1",
-    html_url: "https://github.com/jakemor/kanna/releases/tag/v0.8.1",
+    html_url: "https://example.invalid/releases/tag/v0.8.1",
     published_at: "2026-03-19T16:53:08Z",
     body: "## Improvements\n- Better cursor color",
     prerelease: false,
@@ -31,7 +31,7 @@ const SAMPLE_RELEASES = [
     id: 2,
     name: null,
     tag_name: "v0.9.0-beta.1",
-    html_url: "https://github.com/jakemor/kanna/releases/tag/v0.9.0-beta.1",
+    html_url: "https://example.invalid/releases/tag/v0.9.0-beta.1",
     published_at: "2026-03-20T12:00:00Z",
     body: "",
     prerelease: true,
@@ -58,31 +58,23 @@ function createUpdateSnapshot(overrides: Partial<UpdateSnapshot> = {}): UpdateSn
 }
 
 describe("fetchGithubReleases", () => {
-  test("filters draft releases and sends the GitHub accept header", async () => {
-    let requestedUrl = ""
-    let requestedAcceptHeader = ""
+  test("returns no releases without calling a remote changelog feed", async () => {
+    let called = false
 
     const releases = await fetchGithubReleases(async (input, init) => {
-      requestedUrl = String(input)
-      requestedAcceptHeader = String(new Headers(init?.headers).get("Accept"))
-
-      return new Response(JSON.stringify([
-        SAMPLE_RELEASES[0],
-        { ...SAMPLE_RELEASES[1], draft: true },
-      ]), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      })
+      void input
+      void init
+      called = true
+      return new Response("[]", { status: 200 })
     })
 
-    expect(requestedUrl).toBe("https://api.github.com/repos/jakemor/kanna/releases")
-    expect(requestedAcceptHeader).toBe("application/vnd.github+json")
-    expect(releases).toEqual([SAMPLE_RELEASES[0]])
+    expect(called).toBe(false)
+    expect(releases).toEqual([])
   })
 
-  test("throws on non-200 responses", async () => {
-    await expect(fetchGithubReleases(async () => new Response("nope", { status: 403 }))).rejects.toThrow(
-      "GitHub releases request failed with status 403"
+  test("ignores non-200 responses because remote changelog fetching is disabled", async () => {
+    await expect(fetchGithubReleases(async () => new Response("nope", { status: 403 }))).resolves.toEqual(
+      []
     )
   })
 })
@@ -124,7 +116,7 @@ describe("changelog cache", () => {
       }),
     })
 
-    expect(releases).toEqual([SAMPLE_RELEASES[1]])
+    expect(releases).toEqual([])
   })
 })
 
@@ -209,7 +201,7 @@ describe("ChangelogSection", () => {
     expect(html).toContain("v0.8.1")
     expect(html).toContain("Better cursor color")
     expect(html).toContain('aria-label="View release on GitHub"')
-    expect(html).toContain("https://github.com/jakemor/kanna/releases/tag/v0.8.1")
+    expect(html).toContain("https://example.invalid/releases/tag/v0.8.1")
     expect(html).toContain("Prerelease")
     expect(html).toContain("No release notes were provided.")
     expect(html).toContain(formatPublishedDate("2026-03-19T16:53:08Z"))

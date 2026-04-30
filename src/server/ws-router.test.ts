@@ -10,6 +10,9 @@ import { createWsRouter } from "./ws-router"
 function withSidebarGroupDefaults(group: {
   groupKey: string
   localPath: string
+  title?: string
+  machineId?: "local"
+  machineLabel?: string
   chats: Array<{
     _id: string
     _creationTime: number
@@ -22,11 +25,26 @@ function withSidebarGroupDefaults(group: {
     lastMessageAt?: number
     canFork?: boolean
     hasAutomation: boolean
+    machineId?: "local"
+    machineLabel?: string
   }>
 }) {
+  const machineId = group.machineId ?? "local"
+  const machineLabel = group.machineLabel ?? "Local Machine"
   return {
     ...group,
-    previewChats: group.chats,
+    machineId,
+    machineLabel,
+    chats: group.chats.map((chat) => ({
+      ...chat,
+      machineId: chat.machineId ?? machineId,
+      machineLabel: chat.machineLabel ?? machineLabel,
+    })),
+    previewChats: group.chats.map((chat) => ({
+      ...chat,
+      machineId: chat.machineId ?? machineId,
+      machineLabel: chat.machineLabel ?? machineLabel,
+    })),
     olderChats: [],
     defaultCollapsed: true,
   }
@@ -73,6 +91,7 @@ const DEFAULT_APP_SETTINGS_SNAPSHOT: AppSettingsSnapshot = {
     preset: "cursor",
     commandTemplate: "cursor {path}",
   },
+  machineAliases: {},
   defaultProvider: "last_used",
   providerDefaults: {
     claude: {
@@ -1217,6 +1236,7 @@ describe("ws-router", () => {
           projectGroups: [withSidebarGroupDefaults({
             groupKey: "project-1",
             localPath: "/tmp/project",
+            title: "Project",
             chats: [{
               _id: "chat-1",
               _creationTime: 1,
@@ -1242,6 +1262,7 @@ describe("ws-router", () => {
           projectGroups: [withSidebarGroupDefaults({
             groupKey: "project-1",
             localPath: "/tmp/project",
+            title: "Project",
             chats: [{
               _id: "chat-1",
               _creationTime: 1,
@@ -1343,11 +1364,13 @@ describe("ws-router", () => {
             withSidebarGroupDefaults({
               groupKey: "project-1",
               localPath: "/tmp/project-1",
+              title: "Project 1",
               chats: [],
             }),
             withSidebarGroupDefaults({
               groupKey: "project-2",
               localPath: "/tmp/project-2",
+              title: "Project 2",
               chats: [],
             }),
           ],
@@ -1456,6 +1479,7 @@ describe("ws-router", () => {
           projectGroups: [withSidebarGroupDefaults({
             groupKey: "project-1",
             localPath: "/tmp/project",
+            title: "Project",
             chats: [{
               _id: "chat-fork-1",
               _creationTime: 2,
@@ -1557,6 +1581,7 @@ describe("ws-router", () => {
             ...withSidebarGroupDefaults({
               groupKey: "project-1",
               localPath: "/tmp/project",
+              title: "Project",
               chats: [],
             }),
           }],

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { PROVIDERS } from "../../../shared/types"
-import { ChatInput, getClipboardImageFiles, trimTrailingPastedNewlines, willExceedAttachmentLimit } from "./ChatInput"
+import { ChatInput, getClipboardImageFiles, getClipboardImageFilesFromDataTransfer, getClipboardImageFilesFromHtml, trimTrailingPastedNewlines, willExceedAttachmentLimit } from "./ChatInput"
 
 function createClipboardItem(args: {
   kind?: string
@@ -66,6 +66,23 @@ describe("getClipboardImageFiles", () => {
     expect(files).toEqual([])
   })
 
+  test("accepts image files when the clipboard item type is blank", () => {
+    const files = getClipboardImageFiles([
+      createClipboardItem({ type: "", file: new File(["img"], "image.png", { type: "image/png" }) }),
+    ], 123)
+
+    expect(files).toHaveLength(1)
+    expect(files[0]?.name).toBe("clipboard-123.png")
+  })
+
+  test("accepts array-like clipboard item lists", () => {
+    const item = createClipboardItem({ type: "image/png", file: new File(["img"], "pasted.png", { type: "image/png" }) })
+    const files = getClipboardImageFiles({ 0: item, length: 1 }, 123)
+
+    expect(files).toHaveLength(1)
+    expect(files[0]?.name).toBe("pasted.png")
+  })
+
   test("renames unnamed pasted images using the clipboard timestamp", () => {
     const files = getClipboardImageFiles([
       createClipboardItem({ type: "image/png", file: new File(["img"], "", { type: "image/png" }) }),
@@ -101,6 +118,30 @@ describe("getClipboardImageFiles", () => {
       "clipboard-789-1.webp",
     ])
   })
+
+  test("falls back to clipboard files when item data does not expose the image", () => {
+    const files = getClipboardImageFilesFromDataTransfer({
+      items: [
+        createClipboardItem({ kind: "string", type: "text/plain" }),
+      ],
+      files: [
+        new File(["img"], "image.png", { type: "image/png" }),
+        new File(["text"], "notes.txt", { type: "text/plain" }),
+      ],
+    } as unknown as DataTransfer, 321)
+
+    expect(files).toHaveLength(1)
+    expect(files[0]?.name).toBe("clipboard-321.png")
+  })
+
+  test("extracts pasted data URL images from clipboard html", async () => {
+    const files = getClipboardImageFilesFromHtml('<img src="data:image/png;base64,aW1n">', 654)
+
+    expect(files).toHaveLength(1)
+    expect(files[0]?.name).toBe("clipboard-654.png")
+    expect(files[0]?.type).toBe("image/png")
+    expect(await files[0]?.text()).toBe("img")
+  })
 })
 
 describe("trimTrailingPastedNewlines", () => {
@@ -135,5 +176,6 @@ describe("ChatInput", () => {
     expect(html).toContain('type="file"')
     expect(html).toContain("absolute inset-0 cursor-pointer opacity-0")
     expect(html).not.toContain('type="file" multiple="" class="hidden"')
+    expect(html).not.toContain("md:hidden")
   })
 })

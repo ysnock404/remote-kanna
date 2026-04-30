@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { getAppAuthStateFromStatus, shouldPlayChatNotificationSound, shouldRedirectToChangelog, shouldRetryAuthStatusRequest } from "./App"
+import { clearSavedPassword, getAppAuthStateFromStatus, readSavedPassword, shouldPlayChatNotificationSound, shouldRedirectToChangelog, shouldRetryAuthStatusRequest } from "./App"
 import { getChatNotificationSnapshot, getChatSoundBurstCount, getNotificationTitleCount } from "./chatNotifications"
 import { DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, clampSidebarWidth } from "./KannaSidebar"
 import { isBrowserUnfocused, shouldPlayChatSound } from "../lib/chatSounds"
@@ -49,6 +49,19 @@ describe("auth boot helpers", () => {
     expect(shouldRetryAuthStatusRequest(null)).toBe(true)
     expect(shouldRetryAuthStatusRequest(false)).toBe(true)
     expect(shouldRetryAuthStatusRequest(true)).toBe(false)
+  })
+
+  test("reads saved passwords only when a value exists", () => {
+    expect(readSavedPassword({ getItem: () => "secret" })).toBe("secret")
+    expect(readSavedPassword({ getItem: () => "" })).toBeNull()
+    expect(readSavedPassword({ getItem: () => null })).toBeNull()
+  })
+
+  test("clears saved passwords without surfacing storage errors", () => {
+    const removed: string[] = []
+    clearSavedPassword({ removeItem: (key) => removed.push(key) })
+    expect(removed).toEqual(["kanna:saved-password"])
+    expect(() => clearSavedPassword({ removeItem: () => { throw new Error("blocked") } })).not.toThrow()
   })
 })
 

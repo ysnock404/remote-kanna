@@ -1,4 +1,5 @@
 import { useOutletContext } from "react-router-dom"
+import type { MachineId } from "../../shared/types"
 import { LocalDev } from "../components/LocalDev"
 import type { KannaState } from "./useKannaState"
 
@@ -14,6 +15,7 @@ export function LocalProjectsPage() {
         startingLocalPath={state.startingLocalPath}
         commandError={state.commandError}
         newProjectOpen={state.addProjectModalOpen}
+        selectedMachineId={state.selectedMachineId}
         onNewProjectOpenChange={(open) => {
           if (open) {
             state.openAddProjectModal()
@@ -21,8 +23,19 @@ export function LocalProjectsPage() {
           }
           state.closeAddProjectModal()
         }}
+        onSelectMachine={state.setSelectedMachineId}
+        onRenameMachine={async (machineId: MachineId, label: string) => {
+          await state.handleWriteAppSettings({
+            machineAliases: {
+              ...(state.appSettings?.machineAliases ?? {}),
+              [machineId]: label,
+            },
+          })
+        }}
+        onOpenGeneralChat={state.handleCreateGeneralChat}
         onOpenProject={state.handleOpenLocalProject}
         onCreateProject={state.handleCreateProject}
+        onBrowseDirectories={state.handleListDirectories}
       />
     </div>
   )

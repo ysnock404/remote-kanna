@@ -17,8 +17,8 @@ import {
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { useNavigate, useOutletContext, useParams } from "react-router-dom"
-import { getKeybindingsFilePathDisplay, SDK_CLIENT_APP } from "../../shared/branding"
-import { ANALYTICS_STATIC_EVENT_NAMES, ANALYTICS_STATIC_PROPERTY_NAMES } from "../../shared/analytics"
+import { APP_NAME, getKeybindingsFilePathDisplay, SDK_CLIENT_APP } from "../../shared/branding"
+import { LOCAL_MACHINE_ID } from "../../shared/project-location"
 import {
   DEFAULT_KEYBINDINGS,
   DEFAULT_OPENAI_SDK_MODEL,
@@ -27,11 +27,13 @@ import {
   type AgentProvider,
   type KeybindingAction,
   type LlmProviderKind,
+  type MachineId,
   type UpdateSnapshot,
 } from "../../shared/types"
 import { markdownComponents } from "../components/messages/shared"
 import { ChatPreferenceControls } from "../components/chat-ui/ChatPreferenceControls"
 import { EDITOR_OPTIONS, EditorIcon } from "../components/editor-icons"
+import { MachineSelector } from "../components/MachineSelector"
 import { Button, buttonVariants } from "../components/ui/button"
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogTitle } from "../components/ui/dialog"
 import { Input } from "../components/ui/input"
@@ -111,18 +113,12 @@ const chatSoundPreferenceOptions: { value: ChatSoundPreference; label: string }[
   { value: "always", label: "Always" },
 ]
 
-const analyticsOptions = [
-  { value: "disabled" as const, label: "Off" },
-  { value: "enabled" as const, label: "On" },
-]
-
 const QUICK_RESPONSE_PROVIDER_OPTIONS: Array<{ value: LlmProviderKind; label: string }> = [
   { value: "openai", label: "OpenAI" },
   { value: "openrouter", label: "OpenRouter" },
   { value: "custom", label: "Custom" },
 ]
 
-const GITHUB_RELEASES_URL = "https://api.github.com/repos/jakemor/kanna/releases"
 const CHANGELOG_CACHE_TTL_MS = 5 * 60 * 1000
 
 type GithubRelease = {
@@ -164,17 +160,8 @@ export function resetSettingsPageChangelogCache() {
 }
 
 export async function fetchGithubReleases(fetchImpl: FetchReleases = fetch): Promise<GithubRelease[]> {
-  const response = await fetchImpl(GITHUB_RELEASES_URL, {
-    headers: {
-      Accept: "application/vnd.github+json",
-    },
-  })
-  if (!response.ok) {
-    throw new Error(`GitHub releases request failed with status ${response.status}`)
-  }
-
-  const payload = await response.json() as GithubRelease[]
-  return payload.filter((release) => !release.draft)
+  void fetchImpl
+  return []
 }
 
 export function getCachedChangelog() {
@@ -279,7 +266,7 @@ export function ChangelogSection({
         <div className="rounded-lg border border-border bg-card/30 px-6 py-8">
           <div className="text-sm font-medium text-foreground">No releases yet</div>
           <div className="mt-2 text-sm text-muted-foreground">
-            GitHub did not return any published releases for this repository.
+            Changelog fetching is disabled in this fork.
           </div>
         </div>
       ) : null}
@@ -459,6 +446,16 @@ export function SettingsPage() {
   const isConnecting = state.connectionStatus === "connecting" || !state.localProjectsReady
   const machineName = state.localProjects?.machine.displayName ?? "Unavailable"
   const projectCount = state.localProjects?.projects.length ?? 0
+  const machines = state.localProjects?.machines ?? []
+  const projectCounts = useMemo(() => {
+    const counts = new Map<MachineId, number>()
+    for (const project of state.localProjects?.projects ?? []) {
+      const machineId = project.machineId ?? LOCAL_MACHINE_ID
+      counts.set(machineId, (counts.get(machineId) ?? 0) + 1)
+    }
+    return counts
+  }, [state.localProjects?.projects])
+  const selectedProjectCount = projectCounts.get(state.selectedMachineId) ?? projectCount
   const appVersion = SDK_CLIENT_APP.split("/")[1] ?? "unknown"
   const scrollbackLines = useTerminalPreferencesStore((store) => store.scrollbackLines)
   const minColumnWidth = useTerminalPreferencesStore((store) => store.minColumnWidth)
@@ -490,7 +487,6 @@ export function SettingsPage() {
   const [keybindingDrafts, setKeybindingDrafts] = useState<Record<string, string>>({})
   const [keybindingsError, setKeybindingsError] = useState<string | null>(null)
   const [appSettingsError, setAppSettingsError] = useState<string | null>(null)
-  const [analyticsDialogOpen, setAnalyticsDialogOpen] = useState(false)
   const [llmProviderDraft, setLlmProviderDraft] = useState({
     provider: "openai" as LlmProviderKind,
     apiKey: "",
@@ -511,7 +507,7 @@ export function SettingsPage() {
     : updateSnapshot?.status === "updating"
       ? "Installing update…"
       : updateSnapshot?.status === "restart_pending"
-        ? "Restarting Kanna…"
+        ? `Restarting ${APP_NAME}…`
         : updateSnapshot?.status === "available"
           ? `Update available${updateSnapshot.latestVersion ? `: ${updateSnapshot.latestVersion}` : ""}`
           : updateSnapshot?.status === "up_to_date"
@@ -706,15 +702,6 @@ export function SettingsPage() {
     void playChatNotificationSound(nextValue, 1).catch(() => undefined)
   }
 
-  async function handleAnalyticsPreferenceChange(nextValue: "enabled" | "disabled") {
-    try {
-      setAppSettingsError(null)
-      await handleWriteAppSettings({ analyticsEnabled: nextValue === "enabled" })
-    } catch (error) {
-      setAppSettingsError(error instanceof Error ? error.message : "Unable to save analytics settings.")
-    }
-  }
-
   function handleDefaultProviderChange(nextValue: "last_used" | AgentProvider) {
     setDefaultProvider(nextValue)
     void handleWriteAppSettings({ defaultProvider: nextValue }).catch((error) => {
@@ -828,8 +815,6 @@ export function SettingsPage() {
     .replaceAll("{path}", "/Users/jake/Projects/kanna/src/client/app/App.tsx")
     .replaceAll("{line}", "12")
     .replaceAll("{column}", "1")
-  const analyticsDisclosureEvents = ANALYTICS_STATIC_EVENT_NAMES
-  const analyticsSettingValue = appSettings?.analyticsEnabled === false ? "disabled" : "enabled"
   const selectedSection = sidebarItems.find((item) => item.id === selectedPage) ?? sidebarItems[0]
   const selectedSectionSubtitle =
     selectedPage === "keybindings"
@@ -1245,39 +1230,11 @@ export function SettingsPage() {
                         </div>
                       </SettingsRow>
 
-                      <SettingsRow
-                        title="Anonymous Analytics"
-                        description={(
-                          <>
-                            <span>
-                              Help improve Kanna with anonymous product analytics. Kanna sends tracked event names plus a small set of event properties like current version, environment, update version info, and launch flags. No message content, prompts, file paths, or provider credentials are sent.
-                            </span>
-                            <span className="mt-1 block">
-                              Stored in {appSettings?.filePathDisplay ?? "~/.kanna/data/settings.json"}.
-                              {" "}
-                              <button
-                                type="button"
-                                onClick={() => setAnalyticsDialogOpen(true)}
-                                className="underline underline-offset-2 text-foreground hover:text-foreground/80"
-                              >
-                                View tracked events
-                              </button>
-                            </span>
-                            {appSettings?.warning ? (
-                              <span className="mt-1 block">{appSettings.warning}</span>
-                            ) : null}
-                          </>
-                        )}
-                      >
-                        <SegmentedControl
-                          value={analyticsSettingValue}
-                          onValueChange={(value) => {
-                            void handleAnalyticsPreferenceChange(value)
-                          }}
-                          options={analyticsOptions}
-                          size="sm"
-                        />
-                      </SettingsRow>
+                      {appSettings?.warning ? (
+                        <div className="border-t border-border py-5 text-[13px] text-muted-foreground">
+                          {appSettings.warning}
+                        </div>
+                      ) : null}
                     </div>
                   </>
                 ) : selectedPage === "providers" ? (
@@ -1532,12 +1489,31 @@ export function SettingsPage() {
                 <div className="text-foreground/80">{machineName}</div>
               </div>
               <div className="hidden md:block">
-                <div className="mb-1 uppercase tracking-wide text-[11px] text-muted-foreground/80">Connection</div>
-                <div className="text-foreground/80">{state.connectionStatus}</div>
+                <div className="mb-1 uppercase tracking-wide text-[11px] text-muted-foreground/80">Device</div>
+                {machines.length > 0 ? (
+                  <MachineSelector
+                    machines={machines}
+                    selectedMachineId={state.selectedMachineId}
+                    projectCounts={projectCounts}
+                    onSelectMachine={state.setSelectedMachineId}
+                    onRenameMachine={async (machineId: MachineId, label: string) => {
+                      await state.handleWriteAppSettings({
+                        machineAliases: {
+                          ...(state.appSettings?.machineAliases ?? {}),
+                          [machineId]: label,
+                        },
+                      })
+                    }}
+                    compact
+                    className="-ml-1"
+                  />
+                ) : (
+                  <div className="text-foreground/80">{state.connectionStatus}</div>
+                )}
               </div>
               <div className="hidden md:block">
                 <div className="mb-1 uppercase tracking-wide text-[11px] text-muted-foreground/80">Projects Indexed</div>
-                <div className="text-foreground/80">{projectCount}</div>
+                <div className="text-foreground/80">{selectedProjectCount}</div>
               </div>
               <div>
                 <div className="mb-1 uppercase tracking-wide text-[11px] text-muted-foreground/80">App Version</div>
@@ -1547,43 +1523,6 @@ export function SettingsPage() {
           </div>
         </div>
       ) : null}
-      <Dialog open={analyticsDialogOpen} onOpenChange={setAnalyticsDialogOpen}>
-        <DialogContent size="lg">
-          <DialogBody className="space-y-4">
-            <DialogTitle>Tracked Events</DialogTitle>
-            <div className="text-sm text-muted-foreground">
-              Kanna sends these event names plus the limited property keys below, depending on the event type.
-            </div>
-            <div className="max-h-[60vh] overflow-auto rounded-lg border border-border bg-muted/40 p-3">
-              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Event Names
-              </div>
-              <ul className="mt-3 space-y-2 text-sm">
-                {analyticsDisclosureEvents.map((eventName) => (
-                  <li key={eventName} className="font-mono text-foreground">
-                    {eventName}
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-6 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Property Keys
-              </div>
-              <ul className="mt-3 space-y-2 text-sm">
-                {ANALYTICS_STATIC_PROPERTY_NAMES.map((propertyName) => (
-                  <li key={propertyName} className="font-mono text-foreground">
-                    {propertyName}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </DialogBody>
-          <DialogFooter>
-            <Button variant="secondary" size="sm" onClick={() => setAnalyticsDialogOpen(false)}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
       <Dialog open={llmValidationDialogOpen} onOpenChange={setLlmValidationDialogOpen}>
         <DialogContent size="lg">
           <DialogBody className="space-y-4">

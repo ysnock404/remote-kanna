@@ -51,6 +51,13 @@ export type ProjectEvent = {
   machineId?: MachineId
   localPath: string
   title: string
+  isGeneralChat?: boolean
+} | {
+  v: 2
+  type: "project_renamed"
+  timestamp: number
+  projectId: string
+  title: string
 } | {
   v: 2
   type: "project_removed"

@@ -138,6 +138,13 @@ const STEERED_MESSAGE_PREFIX = `<system-message>
 The user would like to inform you of something while you continue to work. Acknowledge receipt immediately with a text response, then continue with the task at hand, incorporating the user's feedback if needed.
 </system-message>`
 
+const GENERAL_CHAT_MESSAGE_PREFIX = `<system-message>
+This conversation is a general chat. No user project or repository is attached.
+The current working directory is an internal scratch directory used only because the agent runtime requires a cwd. It is not the user's project.
+Do not inspect or summarize the current directory to answer questions about "the project", repository state, files, git status, or app code. If the user asks about the current project while in this mode, say that no project is attached and ask them to open or select the project folder first.
+Do not mention the internal scratch directory unless the user explicitly asks about runtime internals.
+</system-message>`
+
 interface SendMessageOptions {
   provider?: AgentProvider
   model?: string
@@ -170,6 +177,16 @@ function buildSteeredMessageContent(content: string) {
   return content.trim().length > 0
     ? `${STEERED_MESSAGE_PREFIX}\n\n${content}`
     : STEERED_MESSAGE_PREFIX
+}
+
+function buildAgentMessageContent(content: string, project: ProjectRecord) {
+  if (!project.isGeneralChat) {
+    return content
+  }
+  const trimmed = content.trim()
+  return trimmed
+    ? `${GENERAL_CHAT_MESSAGE_PREFIX}\n\n${trimmed}`
+    : GENERAL_CHAT_MESSAGE_PREFIX
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -882,6 +899,7 @@ export class AgentCoordinator {
       throw new Error("Project not found")
     }
     const projectRuntime = this.resolveProjectRuntime(project)
+    const agentContent = buildAgentMessageContent(args.content, project)
 
     if (args.appendUserPrompt) {
       const userPromptEntry = timestamped(
@@ -974,7 +992,7 @@ export class AgentCoordinator {
       })
       turn = await this.codexManager.startTurn({
         chatId: args.chatId,
-        content: buildPromptText(args.content, args.attachments),
+        content: buildPromptText(agentContent, args.attachments),
         model: args.model,
         effort: args.effort as any,
         serviceTier: args.serviceTier,
@@ -1052,7 +1070,7 @@ export class AgentCoordinator {
         contentPreview: args.content.slice(0, 160),
         pendingPromptSeqs: [...session.pendingPromptSeqs],
       })
-      await session.session.sendPrompt(buildPromptText(args.content, args.attachments))
+      await session.session.sendPrompt(buildPromptText(agentContent, args.attachments))
       logSendToStartingProfile(args.profile, "start_turn.claude_prompt_sent", {
         chatId: args.chatId,
       })

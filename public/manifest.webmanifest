@@ -1,7 +1,7 @@
 {
-  "name": "Kanna",
-  "short_name": "Kanna",
-  "description": "A beautiful local web UI for coding agents.",
+  "name": "Remote Kanna",
+  "short_name": "Remote Kanna",
+  "description": "A local-first web UI for remote coding agents.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -33,14 +33,14 @@
       "sizes": "3824x2482",
       "type": "image/png",
       "form_factor": "wide",
-      "label": "Kanna light theme chat view"
+      "label": "Remote Kanna light theme chat view"
     },
     {
       "src": "/screenshot.png",
       "sizes": "3824x2482",
       "type": "image/png",
       "form_factor": "wide",
-      "label": "Kanna dark theme chat view"
+      "label": "Remote Kanna dark theme chat view"
     }
   ]
 }

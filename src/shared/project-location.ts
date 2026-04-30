@@ -1,4 +1,4 @@
-import type { MachineId, RemoteHostConfig } from "./types"
+import type { MachineAliases, MachineId, RemoteHostConfig } from "./types"
 
 export const LOCAL_MACHINE_ID: MachineId = "local"
 
@@ -22,7 +22,14 @@ export function remoteHostIdFromMachineId(machineId: MachineId) {
   return machineId.startsWith("remote:") ? machineId.slice("remote:".length) : null
 }
 
-export function getMachineLabel(machineId: MachineId, remoteHosts: RemoteHostConfig[], localDisplayName = "Local") {
+export function getMachineLabel(
+  machineId: MachineId,
+  remoteHosts: RemoteHostConfig[],
+  localDisplayName = "Local",
+  aliases: MachineAliases = {}
+) {
+  const alias = aliases[machineId]?.trim()
+  if (alias) return alias
   if (machineId === LOCAL_MACHINE_ID) return localDisplayName
   const hostId = remoteHostIdFromMachineId(machineId)
   return remoteHosts.find((host) => host.id === hostId)?.label ?? hostId ?? machineId

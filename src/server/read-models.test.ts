@@ -180,6 +180,55 @@ describe("read models", () => {
     ])
   })
 
+  test("keeps general chat out of local projects while flagging sidebar and runtime", () => {
+    const state = createEmptyState()
+    state.projectsById.set("project-general", {
+      id: "project-general",
+      machineId: "local",
+      localPath: "/tmp/kanna-data/general-chat-workspace",
+      title: "General Chat",
+      isGeneralChat: true,
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    state.chatsById.set("chat-general", {
+      id: "chat-general",
+      projectId: "project-general",
+      title: "New Chat",
+      createdAt: 2,
+      updatedAt: 2,
+      unread: false,
+      provider: null,
+      planMode: false,
+      sessionToken: null,
+      lastTurnOutcome: null,
+    })
+
+    const projects = deriveLocalProjectsSnapshot(state, [], "Local Machine")
+    expect(projects.projects).toEqual([])
+
+    const sidebar = deriveSidebarData(state, new Map(), { nowMs: 1_000_000 })
+    expect(sidebar.projectGroups[0]?.isGeneralChat).toBe(true)
+    expect(sidebar.projectGroups[0]?.title).toBe("General Chat")
+    expect(sidebar.projectGroups[0]?.chats[0]?.isGeneralChat).toBe(true)
+
+    const chat = deriveChatSnapshot(
+      state,
+      new Map(),
+      new Set(),
+      "chat-general",
+      () => ({
+        messages: [],
+        history: {
+          hasOlder: false,
+          olderCursor: null,
+          recentLimit: 200,
+        },
+      })
+    )
+    expect(chat?.runtime.isGeneralChat).toBe(true)
+  })
+
   test("orders sidebar chats by user-visible activity instead of internal updatedAt churn", () => {
     const state = createEmptyState()
     state.projectsById.set("project-1", {

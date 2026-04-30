@@ -19,20 +19,38 @@ import { TerminalManager } from "./terminal-manager"
 import { UpdateManager } from "./update-manager"
 import type { UpdateInstallAttemptResult } from "./cli-runtime"
 import { createWsRouter, type ClientState } from "./ws-router"
-import { deleteProjectUpload, inferAttachmentContentType, inferProjectFileContentType, persistProjectUpload } from "./uploads"
+import {
+  deleteProjectUpload,
+  deleteRemoteProjectUpload,
+  inferAttachmentContentType,
+  inferProjectFileContentType,
+  persistProjectUpload,
+  persistRemoteProjectUpload,
+  readRemoteProjectUpload,
+} from "./uploads"
 import { getProjectUploadDir } from "./paths"
 
 const MAX_UPLOAD_FILES = 50
 const MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024
 const STALE_EMPTY_CHAT_PRUNE_INTERVAL_MS = 60 * 1000
 
+type PersistUpload = typeof persistProjectUpload
+type DeleteUpload = typeof deleteProjectUpload
+
+function getAttachmentStoredName(attachment: ChatAttachment) {
+  const uploadPath = (attachment.relativePath || attachment.absolutePath).replaceAll("\\", "/")
+  return path.posix.basename(uploadPath)
+}
+
 export async function persistUploadedFiles(args: {
   projectId: string
   localPath: string
   files: File[]
-  persistUpload?: typeof persistProjectUpload
+  persistUpload?: PersistUpload
+  deleteUpload?: DeleteUpload
 }): Promise<ChatAttachment[]> {
   const persistUpload = args.persistUpload ?? persistProjectUpload
+  const deleteUpload = args.deleteUpload ?? deleteProjectUpload
   const attachments: ChatAttachment[] = []
 
   try {
@@ -49,9 +67,9 @@ export async function persistUploadedFiles(args: {
     }
   } catch (error) {
     await Promise.allSettled(
-      attachments.map((attachment) => deleteProjectUpload({
+      attachments.map((attachment) => deleteUpload({
         localPath: args.localPath,
-        storedName: path.basename(attachment.absolutePath),
+        storedName: getAttachmentStoredName(attachment),
       }))
     )
     throw error
@@ -235,17 +253,17 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
             return Response.json({ ok: true, port: actualPort })
           }
 
-          const uploadResponse = await handleProjectUpload(req, url, store)
+          const uploadResponse = await handleProjectUpload(req, url, store, appSettings)
           if (uploadResponse) {
             return uploadResponse
           }
 
-          const deleteUploadResponse = await handleProjectUploadDelete(req, url, store)
+          const deleteUploadResponse = await handleProjectUploadDelete(req, url, store, appSettings)
           if (deleteUploadResponse) {
             return deleteUploadResponse
           }
 
-          const attachmentContentResponse = await handleAttachmentContent(req, url, store)
+          const attachmentContentResponse = await handleAttachmentContent(req, url, store, appSettings)
           if (attachmentContentResponse) {
             return attachmentContentResponse
           }
@@ -313,7 +331,7 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
   }
 }
 
-async function handleProjectUpload(req: Request, url: URL, store: EventStore) {
+async function handleProjectUpload(req: Request, url: URL, store: EventStore, appSettings: AppSettingsManager) {
   if (req.method !== "POST") {
     return null
   }
@@ -326,9 +344,6 @@ async function handleProjectUpload(req: Request, url: URL, store: EventStore) {
   const project = store.getProject(match[1])
   if (!project) {
     return Response.json({ error: "Project not found" }, { status: 404 })
-  }
-  if (project.machineId !== LOCAL_MACHINE_ID) {
-    return Response.json({ error: "Uploads for remote projects are not implemented yet" }, { status: 400 })
   }
 
   const formData = await req.formData()
@@ -354,19 +369,26 @@ async function handleProjectUpload(req: Request, url: URL, store: EventStore) {
   }
 
   try {
+    const runtime = resolveProjectRuntime(normalizeMachineId(project.machineId), appSettings.getSnapshot().remoteHosts ?? [])
     const attachments = await persistUploadedFiles({
       projectId: project.id,
       localPath: project.localPath,
       files,
+      persistUpload: runtime.kind === "ssh"
+        ? (uploadArgs) => persistRemoteProjectUpload({ ...uploadArgs, host: runtime.host })
+        : persistProjectUpload,
+      deleteUpload: runtime.kind === "ssh"
+        ? (deleteArgs) => deleteRemoteProjectUpload({ ...deleteArgs, host: runtime.host })
+        : deleteProjectUpload,
     })
     return Response.json({ attachments })
   } catch (error) {
     console.error("[uploads] Upload failed:", error)
-    return Response.json({ error: "Upload failed" }, { status: 500 })
+    return Response.json({ error: error instanceof Error ? error.message : "Upload failed" }, { status: 500 })
   }
 }
 
-async function handleAttachmentContent(req: Request, url: URL, store: EventStore) {
+async function handleAttachmentContent(req: Request, url: URL, store: EventStore, appSettings: AppSettingsManager) {
   const match = url.pathname.match(/^\/api\/projects\/([^/]+)\/uploads\/([^/]+)\/content$/)
   if (!match) {
     return null
@@ -385,13 +407,33 @@ async function handleAttachmentContent(req: Request, url: URL, store: EventStore
   if (!project) {
     return Response.json({ error: "Project not found" }, { status: 404 })
   }
-  if (project.machineId !== LOCAL_MACHINE_ID) {
-    return Response.json({ error: "Remote attachment content is not implemented yet" }, { status: 400 })
-  }
 
   const storedName = decodeURIComponent(match[2])
   if (!storedName || storedName.includes("/") || storedName.includes("\\") || storedName === "." || storedName === "..") {
     return Response.json({ error: "Invalid attachment path" }, { status: 400 })
+  }
+
+  const runtime = resolveProjectRuntime(normalizeMachineId(project.machineId), appSettings.getSnapshot().remoteHosts ?? [])
+  if (runtime.kind === "ssh") {
+    try {
+      const bytes = await readRemoteProjectUpload({
+        host: runtime.host,
+        localPath: project.localPath,
+        storedName,
+      })
+      if (!bytes) {
+        return Response.json({ error: "Attachment not found" }, { status: 404 })
+      }
+
+      return new Response(bytes, {
+        headers: {
+          "Content-Type": inferAttachmentContentType(storedName),
+        },
+      })
+    } catch (error) {
+      console.error("[uploads] Remote attachment read failed:", error)
+      return Response.json({ error: error instanceof Error ? error.message : "Attachment unavailable" }, { status: 502 })
+    }
   }
 
   const filePath = path.join(getProjectUploadDir(project.localPath), storedName)
@@ -463,7 +505,7 @@ async function handleProjectFileContent(req: Request, url: URL, store: EventStor
   })
 }
 
-async function handleProjectUploadDelete(req: Request, url: URL, store: EventStore) {
+async function handleProjectUploadDelete(req: Request, url: URL, store: EventStore, appSettings: AppSettingsManager) {
   if (req.method !== "DELETE") {
     return null
   }
@@ -477,19 +519,23 @@ async function handleProjectUploadDelete(req: Request, url: URL, store: EventSto
   if (!project) {
     return Response.json({ error: "Project not found" }, { status: 404 })
   }
-  if (project.machineId !== LOCAL_MACHINE_ID) {
-    return Response.json({ error: "Remote upload deletion is not implemented yet" }, { status: 400 })
-  }
 
   const storedName = decodeURIComponent(match[2])
   if (!storedName || storedName.includes("/") || storedName.includes("\\") || storedName === "." || storedName === "..") {
     return Response.json({ error: "Invalid attachment path" }, { status: 400 })
   }
 
-  const deleted = await deleteProjectUpload({
-    localPath: project.localPath,
-    storedName,
-  })
+  const runtime = resolveProjectRuntime(normalizeMachineId(project.machineId), appSettings.getSnapshot().remoteHosts ?? [])
+  const deleted = runtime.kind === "ssh"
+    ? await deleteRemoteProjectUpload({
+        host: runtime.host,
+        localPath: project.localPath,
+        storedName,
+      })
+    : await deleteProjectUpload({
+        localPath: project.localPath,
+        storedName,
+      })
 
   return Response.json({ ok: deleted })
 }

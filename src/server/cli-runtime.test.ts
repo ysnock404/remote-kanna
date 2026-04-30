@@ -28,7 +28,7 @@ function createDeps(overrides: Partial<Parameters<typeof runCli>[1]> = {}) {
       password: string | null
       strictPort: boolean
       trustProxy?: boolean
-      update: {
+      update?: {
         version: string
         argv: string[]
         command: string
@@ -83,7 +83,7 @@ function createDeps(overrides: Partial<Parameters<typeof runCli>[1]> = {}) {
     startShareTunnel: async (localUrl, shareMode) => {
       calls.shareTunnel.push({ localUrl, shareMode })
       return {
-        publicUrl: "https://kanna.trycloudflare.com",
+        publicUrl: "https://remote-kanna.trycloudflare.com",
         stop: () => {
           calls.shareTunnelStops += 1
         },
@@ -281,7 +281,7 @@ describe("runCli", () => {
     const result = await runCli(["--port", "4000", "--no-open"], deps)
 
     expect(result.kind).toBe("started")
-    expect(calls.fetchLatestVersion).toEqual(["kanna-code"])
+    expect(calls.fetchLatestVersion).toEqual([])
     expect(calls.installVersion).toEqual([])
     expect(calls.startServer).toHaveLength(1)
     expect(calls.startServer[0]).toMatchObject({
@@ -292,11 +292,6 @@ describe("runCli", () => {
       password: null,
       strictPort: false,
       trustProxy: false,
-      update: {
-        version: "0.3.0",
-        argv: ["--port", "4000", "--no-open"],
-        command: "kanna",
-      },
     })
     expect(calls.openUrl).toEqual([])
     expect(calls.log).toContain("[kanna] data dir: ~/.kanna/data")
@@ -360,11 +355,11 @@ describe("runCli", () => {
     expect(calls.openUrl).toEqual([])
     expect(calls.startServer[0]?.trustProxy).toBe(true)
     expect(calls.shareTunnel).toEqual([{ localUrl: "http://localhost:4000", shareMode: "quick" }])
-    expect(calls.renderShareQr).toEqual(["https://kanna.trycloudflare.com"])
+    expect(calls.renderShareQr).toEqual(["https://remote-kanna.trycloudflare.com"])
     expect(calls.log).toContain("QR Code:")
-    expect(calls.log).toContain("[qr:https://kanna.trycloudflare.com]")
+    expect(calls.log).toContain("[qr:https://remote-kanna.trycloudflare.com]")
     expect(calls.log).toContain("Public URL:")
-    expect(calls.log).toContain("https://kanna.trycloudflare.com")
+    expect(calls.log).toContain("https://remote-kanna.trycloudflare.com")
     expect(calls.log).toContain("Local URL:")
     expect(calls.log).toContain("http://localhost:4000")
 
@@ -386,7 +381,7 @@ describe("runCli", () => {
       deps.log("[kanna] installing cloudflared binary")
       installLogged = true
       return {
-        publicUrl: "https://kanna.trycloudflare.com",
+        publicUrl: "https://remote-kanna.trycloudflare.com",
         stop: () => {},
       }
     }
@@ -467,7 +462,7 @@ describe("runCli", () => {
     expect(calls.renderShareQr).toEqual([])
   })
 
-  test("returns restarting when a newer version is available", async () => {
+  test("does not self-update when a newer version is available", async () => {
     const { calls, deps } = createDeps({
       fetchLatestVersion: async (packageName) => {
         calls.fetchLatestVersion.push(packageName)
@@ -477,12 +472,13 @@ describe("runCli", () => {
 
     const result = await runCli(["--port", "4000", "--no-open"], deps)
 
-    expect(result).toEqual({ kind: "restarting", reason: "startup_update" })
-    expect(calls.installVersion).toEqual([{ packageName: "kanna-code", version: "0.4.0" }])
-    expect(calls.startServer).toEqual([])
+    expect(result.kind).toBe("started")
+    expect(calls.fetchLatestVersion).toEqual([])
+    expect(calls.installVersion).toEqual([])
+    expect(calls.startServer).toHaveLength(1)
   })
 
-  test("falls back to current version when install fails", async () => {
+  test("does not attempt self-update installs", async () => {
     const { calls, deps } = createDeps({
       fetchLatestVersion: async (packageName) => {
         calls.fetchLatestVersion.push(packageName)
@@ -502,11 +498,12 @@ describe("runCli", () => {
     const result = await runCli(["--no-open"], deps)
 
     expect(result.kind).toBe("started")
-    expect(calls.installVersion).toEqual([{ packageName: "kanna-code", version: "0.4.0" }])
-    expect(calls.warn).toContain("[kanna] update failed, continuing current version")
+    expect(calls.fetchLatestVersion).toEqual([])
+    expect(calls.installVersion).toEqual([])
+    expect(calls.warn).not.toContain("[kanna] update failed, continuing current version")
   })
 
-  test("falls back to current version when the registry check fails", async () => {
+  test("does not perform registry checks during startup", async () => {
     const { calls, deps } = createDeps({
       fetchLatestVersion: async (packageName) => {
         calls.fetchLatestVersion.push(packageName)
@@ -517,7 +514,8 @@ describe("runCli", () => {
     const result = await runCli(["--no-open"], deps)
 
     expect(result.kind).toBe("started")
+    expect(calls.fetchLatestVersion).toEqual([])
     expect(calls.installVersion).toEqual([])
-    expect(calls.warn).toContain("[kanna] update check failed, continuing current version")
+    expect(calls.warn).not.toContain("[kanna] update check failed, continuing current version")
   })
 })

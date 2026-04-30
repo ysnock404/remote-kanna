@@ -13,8 +13,6 @@ import { APP_VERSION } from "../shared/branding"
 import { getProjectExportDir } from "./paths"
 
 const STANDALONE_TRANSCRIPT_BUNDLE_VERSION = 1 as const
-const STANDALONE_SHARE_UPLOAD_BASE_URL = "https://kanna.sh/api/share"
-const STANDALONE_SHARE_PUBLIC_BASE_URL = "https://share.kanna.sh"
 const STANDALONE_SHARE_WORKSPACE_PATH = "/workspace"
 const STANDALONE_SHARE_ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable"
 const CONTENT_TYPES_BY_EXTENSION: Record<string, string> = {
@@ -87,10 +85,9 @@ export async function writeStandaloneTranscriptExport(
   const copyFileImpl = deps.copyFile ?? copyFile
   const readDir = deps.readDir ?? defaultReadDir
   const pathExists = deps.pathExists ?? defaultPathExists
-  const fetchImpl = deps.fetch ?? fetch
   const now = deps.now ?? new Date()
-  const shareUploadBaseUrl = deps.shareUploadBaseUrl ?? STANDALONE_SHARE_UPLOAD_BASE_URL
-  const sharePublicBaseUrl = deps.sharePublicBaseUrl ?? STANDALONE_SHARE_PUBLIC_BASE_URL
+  const shareUploadBaseUrl = deps.shareUploadBaseUrl?.trim() ?? ""
+  const sharePublicBaseUrl = deps.sharePublicBaseUrl?.trim() ?? ""
 
   if (!(await pathExists(viewerDistDir))) {
     throw new Error("Standalone viewer bundle not found. Run `bun run build`.")
@@ -127,30 +124,34 @@ export async function writeStandaloneTranscriptExport(
   const transcriptJson = `${JSON.stringify(bundle, null, 2)}\n`
   const transcriptJsonPath = path.join(outputDir, "transcript.json")
   await writeFileImpl(transcriptJsonPath, transcriptJson, "utf8")
-  const shareSlug = buildStandaloneShareSlug(args.title || args.chatId, deps.shareSlugSuffix)
-  const shareUrl = buildStandaloneShareUrl(sharePublicBaseUrl, shareSlug)
+  const hostedShareEnabled = Boolean(shareUploadBaseUrl && sharePublicBaseUrl)
+  const shareSlug = hostedShareEnabled ? buildStandaloneShareSlug(args.title || args.chatId, deps.shareSlugSuffix) : ""
+  const shareUrl = hostedShareEnabled ? buildStandaloneShareUrl(sharePublicBaseUrl, shareSlug) : ""
   let uploadedFileCount = 0
 
-  try {
-    uploadedFileCount = await uploadStandaloneExportDirectory({
-      outputDir,
-      shareSlug,
-      uploadBaseUrl: shareUploadBaseUrl,
-      fetch: fetchImpl,
-      pathExists,
-      readDir,
-      readFile: readFileImpl,
-    })
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-      outputDir,
-      transcriptJsonPath,
-      transcriptFileName: `${path.basename(outputDir)}-transcript.json`,
-      transcriptJson,
-      shareSlug,
-      shareUrl,
+  if (hostedShareEnabled) {
+    const fetchImpl = deps.fetch ?? fetch
+    try {
+      uploadedFileCount = await uploadStandaloneExportDirectory({
+        outputDir,
+        shareSlug,
+        uploadBaseUrl: shareUploadBaseUrl,
+        fetch: fetchImpl,
+        pathExists,
+        readDir,
+        readFile: readFileImpl,
+      })
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        outputDir,
+        transcriptJsonPath,
+        transcriptFileName: `${path.basename(outputDir)}-transcript.json`,
+        transcriptJson,
+        shareSlug,
+        shareUrl,
+      }
     }
   }
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { buildDefaultOpenCommand, buildEditorCommand, buildPreviewCommand, tokenizeCommandTemplate } from "./external-open"
+import { buildDefaultOpenCommand, buildEditorCommand, buildPreviewCommand, buildRemoteExternalCommand, tokenizeCommandTemplate } from "./external-open"
 
 describe("tokenizeCommandTemplate", () => {
   test("keeps quoted arguments together", () => {
@@ -108,5 +108,34 @@ describe("buildDefaultOpenCommand", () => {
       command: "xdg-open",
       args: ["/tmp/mock.png"],
     })
+  })
+})
+
+describe("buildRemoteExternalCommand", () => {
+  test("does not emit invalid background-command terminators for Git Bash", () => {
+    const command = buildRemoteExternalCommand({
+      type: "system.openExternal",
+      machineId: "remote:desktop",
+      localPath: "/c/Users/ysnock/Documents/project",
+      action: "open_editor",
+      line: 12,
+      column: 3,
+      editor: { preset: "cursor", commandTemplate: "cursor {path}" },
+    })
+
+    expect(command).not.toContain("&;")
+  })
+
+  test("opens Windows remote folders through cmd start", () => {
+    const command = buildRemoteExternalCommand({
+      type: "system.openExternal",
+      machineId: "remote:desktop",
+      localPath: "/c/Users/ysnock/Documents/project",
+      action: "open_finder",
+    })
+
+    expect(command).toContain('cmd.exe //c start "" "$win_path"')
+    expect(command).toContain("explorer.exe /select,")
+    expect(command).not.toContain("&;")
   })
 })

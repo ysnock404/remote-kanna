@@ -2,8 +2,10 @@ import { stat } from "node:fs/promises"
 import path from "node:path"
 import process from "node:process"
 import type { ClientCommand, EditorOpenSettings, EditorPreset } from "../shared/protocol"
+import type { RemoteHostConfig } from "../shared/types"
 import { resolveLocalPath } from "./paths"
 import { canOpenMacApp, hasCommand, spawnDetached } from "./process-utils"
+import { remotePathExpression, runSsh, shellQuote } from "./remote-hosts"
 
 type OpenExternalCommand = Extract<ClientCommand, { type: "system.openExternal" }>
 
@@ -15,6 +17,16 @@ interface CommandSpec {
 const DEFAULT_EDITOR_SETTINGS: EditorOpenSettings = {
   preset: "cursor",
   commandTemplate: "cursor {path}",
+}
+
+function getLinuxDesktopOpener(): CommandSpec | null {
+  if (hasCommand("xdg-open")) return { command: "xdg-open", args: [] }
+  if (hasCommand("gio")) return { command: "gio", args: ["open"] }
+  return null
+}
+
+function missingDesktopOpenerMessage() {
+  return "No desktop opener is available on this machine. Install xdg-utils/gio, or use Open in Cursor/Finder from a project that belongs to a remote desktop machine."
 }
 
 export async function openExternal(command: OpenExternalCommand) {
@@ -116,13 +128,21 @@ export async function openExternal(command: OpenExternalCommand) {
     if (!info) {
       throw new Error(`Path not found: ${resolvedPath}`)
     }
+    if (platform === "linux") {
+      const opener = getLinuxDesktopOpener()
+      if (!opener) throw new Error(missingDesktopOpenerMessage())
+      await spawnDetached(opener.command, [...opener.args, resolvedPath])
+      return
+    }
     const defaultCommand = buildDefaultOpenCommand({ localPath: resolvedPath, platform })
     await spawnDetached(defaultCommand.command, defaultCommand.args)
     return
   }
 
   if (command.action === "open_finder") {
-    await spawnDetached("xdg-open", [info?.isDirectory() ? resolvedPath : path.dirname(resolvedPath)])
+    const opener = getLinuxDesktopOpener()
+    if (!opener) throw new Error(missingDesktopOpenerMessage())
+    await spawnDetached(opener.command, [...opener.args, info?.isDirectory() ? resolvedPath : path.dirname(resolvedPath)])
     return
   }
   if (command.action === "open_terminal") {
@@ -137,8 +157,167 @@ export async function openExternal(command: OpenExternalCommand) {
       }
       return
     }
-    await spawnDetached("xdg-open", [resolvedPath])
+    const opener = getLinuxDesktopOpener()
+    if (!opener) throw new Error(missingDesktopOpenerMessage())
+    await spawnDetached(opener.command, [...opener.args, resolvedPath])
   }
+}
+
+export async function openExternalOnRemote(host: RemoteHostConfig, command: OpenExternalCommand) {
+  const remoteCommand = buildRemoteExternalCommand(command)
+  console.log(`[kanna] open external remote ${host.label}: ${command.action} ${command.localPath}`)
+  const result = await runSsh(host, remoteCommand, 10_000)
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.trim() || result.stdout.trim() || `Failed to open path on ${host.label}`)
+  }
+}
+
+export function buildRemoteExternalCommand(command: OpenExternalCommand) {
+  const editor = normalizeEditorSettings(command.editor ?? DEFAULT_EDITOR_SETTINGS)
+  const customEditorCommand = editor.preset === "custom"
+    ? buildCustomEditorCommand({
+        commandTemplate: editor.commandTemplate,
+        localPath: command.localPath,
+        line: command.line,
+        column: command.column,
+      })
+    : null
+  const customEditorCommandLine = customEditorCommand
+    ? [customEditorCommand.command, ...customEditorCommand.args].map(shellQuote).join(" ")
+    : ""
+
+  const preset = editor.preset
+  const action = command.action
+  const line = command.line ? String(command.line) : ""
+  const column = command.column ? String(command.column) : "1"
+
+  const invokeAction = (() => {
+    switch (action) {
+      case "open_editor":
+        if (preset === "custom") {
+          return `kanna_open_custom_editor`
+        }
+        return `kanna_open_editor_preset ${shellQuote(preset)}`
+      case "open_finder":
+        return "kanna_open_finder"
+      case "open_terminal":
+        return "kanna_open_terminal"
+      case "open_preview":
+        return "kanna_open_preview"
+      case "open_default":
+      default:
+        return "kanna_open_default \"$target\""
+    }
+  })()
+
+  return [
+    `target=${remotePathExpression(command.localPath)}`,
+    `[ -e "$target" ] || { echo "Path not found: $target" >&2; exit 2; }`,
+    `is_dir=0`,
+    `[ -d "$target" ] && is_dir=1`,
+    `parent=$(dirname "$target")`,
+    `open_dir="$target"`,
+    `[ "$is_dir" = "1" ] || open_dir="$parent"`,
+    `platform=$(uname -s 2>/dev/null || echo unknown)`,
+    `line=${shellQuote(line)}`,
+    `column=${shellQuote(column)}`,
+    `custom_editor_command=${shellQuote(customEditorCommandLine)}`,
+    `kanna_detach() { "$@" >/dev/null 2>&1 & }`,
+    `kanna_win_path() { if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi; }`,
+    `kanna_win_editor_exe() {`,
+    `  case "$1" in`,
+    `    cursor) candidates="$LOCALAPPDATA/Programs/cursor/Cursor.exe|$LOCALAPPDATA/Programs/Cursor/Cursor.exe|$USERPROFILE/AppData/Local/Programs/cursor/Cursor.exe|$USERPROFILE/AppData/Local/Programs/Cursor/Cursor.exe" ;;`,
+    `    vscode) candidates="$LOCALAPPDATA/Programs/Microsoft VS Code/Code.exe|$USERPROFILE/AppData/Local/Programs/Microsoft VS Code/Code.exe" ;;`,
+    `    windsurf) candidates="$LOCALAPPDATA/Programs/Windsurf/Windsurf.exe|$USERPROFILE/AppData/Local/Programs/Windsurf/Windsurf.exe" ;;`,
+    `    *) return 1 ;;`,
+    `  esac`,
+    `  old_ifs=$IFS; IFS='|'`,
+    `  for exe in $candidates; do [ -f "$exe" ] && { printf '%s' "$exe"; IFS="$old_ifs"; return 0; }; done`,
+    `  IFS="$old_ifs"; return 1`,
+    `}`,
+    `kanna_open_with_desktop() {`,
+    `  case "$platform" in`,
+    `    Darwin*) kanna_detach open "$1" ;;`,
+    `    MINGW*|MSYS*|CYGWIN*) win_path=$(kanna_win_path "$1"); cmd.exe //c start "" "$win_path" >/dev/null 2>&1 & ;;`,
+    `    *)`,
+    `      if command -v xdg-open >/dev/null 2>&1; then kanna_detach xdg-open "$1";`,
+    `      elif command -v gio >/dev/null 2>&1; then kanna_detach gio open "$1";`,
+    `      else echo "No desktop opener found on remote host" >&2; exit 127; fi`,
+    `      ;;`,
+    `  esac`,
+    `}`,
+    `kanna_open_finder() {`,
+    `  case "$platform" in`,
+    `    Darwin*) if [ "$is_dir" = "1" ]; then kanna_detach open "$target"; else kanna_detach open -R "$target"; fi ;;`,
+    `    MINGW*|MSYS*|CYGWIN*)`,
+    `      win_path=$(kanna_win_path "$target")`,
+    `      if [ "$is_dir" = "1" ]; then`,
+    `        cmd.exe //c start "" "$win_path" >/dev/null 2>&1 &`,
+    `      else`,
+    `        explorer.exe /select,"$win_path" >/dev/null 2>&1 &`,
+    `      fi`,
+    `      ;;`,
+    `    *) kanna_open_with_desktop "$open_dir" ;;`,
+    `  esac`,
+    `}`,
+    `kanna_open_terminal() {`,
+    `  case "$platform" in`,
+    `    Darwin*) kanna_detach open -a Terminal "$open_dir" ;;`,
+    `    MINGW*|MSYS*|CYGWIN*) win_dir=$(kanna_win_path "$open_dir"); if command -v wt.exe >/dev/null 2>&1; then kanna_detach wt.exe -d "$win_dir"; else cmd.exe //c start "" cmd //K "cd /d $win_dir" >/dev/null 2>&1 & fi ;;`,
+    `    *)`,
+    `      if command -v x-terminal-emulator >/dev/null 2>&1; then kanna_detach x-terminal-emulator --working-directory "$open_dir";`,
+    `      elif command -v gnome-terminal >/dev/null 2>&1; then kanna_detach gnome-terminal --working-directory "$open_dir";`,
+    `      elif command -v konsole >/dev/null 2>&1; then kanna_detach konsole --workdir "$open_dir";`,
+    `      else kanna_open_with_desktop "$open_dir"; fi`,
+    `      ;;`,
+    `  esac`,
+    `}`,
+    `kanna_open_preview() {`,
+    `  [ "$is_dir" = "0" ] || { echo "Preview cannot open directories" >&2; exit 2; }`,
+    `  case "$platform" in`,
+    `    Darwin*) kanna_detach open -a Preview "$target" ;;`,
+    `    *) echo "Preview is only available on macOS" >&2; exit 2 ;;`,
+    `  esac`,
+    `}`,
+    `kanna_open_custom_editor() {`,
+    `  [ -n "$custom_editor_command" ] || { echo "Custom editor command is empty" >&2; exit 2; }`,
+    `  nohup sh -lc "$custom_editor_command" >/dev/null 2>&1 &`,
+    `}`,
+    `kanna_open_editor_preset() {`,
+    `  preset="$1"`,
+    `  cli="$preset"`,
+    `  mac_app="$preset"`,
+    `  case "$preset" in`,
+    `    cursor) cli="cursor"; mac_app="Cursor" ;;`,
+    `    vscode) cli="code"; mac_app="Visual Studio Code" ;;`,
+    `    windsurf) cli="windsurf"; mac_app="Windsurf" ;;`,
+    `    xcode) cli="xed"; mac_app="Xcode" ;;`,
+    `  esac`,
+    `  if command -v "$cli" >/dev/null 2>&1; then`,
+    `    if [ "$preset" = "xcode" ] && [ "$is_dir" = "0" ] && [ -n "$line" ]; then kanna_detach "$cli" -l "$line" "$target"; return; fi`,
+    `    if [ "$is_dir" = "0" ] && [ -n "$line" ] && [ "$preset" != "xcode" ]; then kanna_detach "$cli" --goto "$target:$line:$column"; return; fi`,
+    `    kanna_detach "$cli" "$target"; return`,
+    `  fi`,
+    `  case "$platform" in`,
+    `    Darwin*) kanna_detach open -a "$mac_app" "$target" ;;`,
+    `    MINGW*|MSYS*|CYGWIN*)`,
+    `      win_path=$(kanna_win_path "$target")`,
+    `      if win_exe=$(kanna_win_editor_exe "$preset"); then`,
+    `        win_exe=$(kanna_win_path "$win_exe")`,
+    `        if [ "$is_dir" = "0" ] && [ -n "$line" ] && [ "$preset" != "xcode" ]; then`,
+    `          cmd.exe //c start "" "$win_exe" --goto "$win_path:$line:$column" >/dev/null 2>&1 &`,
+    `        else`,
+    `          cmd.exe //c start "" "$win_exe" "$win_path" >/dev/null 2>&1 &`,
+    `        fi`,
+    `      else`,
+    `        cmd.exe //c start "" "$cli" "$win_path" >/dev/null 2>&1 &`,
+    `      fi`,
+    `      ;;`,
+    `    *) echo "$mac_app is not installed on remote host" >&2; exit 127 ;;`,
+    `  esac`,
+    `}`,
+    invokeAction,
+  ].join("\n")
 }
 
 export function buildEditorCommand(args: {

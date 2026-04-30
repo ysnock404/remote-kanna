@@ -1,5 +1,5 @@
 import { PatchDiff } from "@pierre/diffs/react"
-import { AlertTriangle, ArrowUp, Ban, Building2, Check, ChevronDown, ChevronUp, Code, Columns2, Copy, Download, Ellipsis, FileText, FolderOpen, GitBranch, GitBranchPlus, Github, GitMerge, GitPullRequest, Globe, LoaderCircle, Lock, Minus, PencilLine, PenLine, RefreshCw, Rows3, Search, Trash2, Upload, UserRound, WrapText } from "lucide-react"
+import { AlertTriangle, ArrowUp, Ban, Building2, Check, ChevronDown, ChevronUp, Code, Columns2, Copy, Download, Ellipsis, FileText, Folder, FolderOpen, GitBranch, GitBranchPlus, Github, GitMerge, GitPullRequest, Globe, LoaderCircle, Lock, Minus, PencilLine, PenLine, RefreshCw, Rows3, Search, Trash2, Upload, UserRound, WrapText } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react"
 import type {
   ChatAttachment,
@@ -13,6 +13,8 @@ import type {
   ChatMergePreviewResult,
   GitHubPublishInfo,
   GitHubRepoAvailabilityResult,
+  ProjectFileTreeEntry,
+  ProjectFileTreeSnapshot,
 } from "../../../shared/types"
 import { useStickyState } from "../../hooks/useStickyState"
 import { cn } from "../../lib/utils"
@@ -33,7 +35,7 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, Dia
 
 type DiffRenderMode = "unified" | "split"
 type DiffFile = ChatDiffSnapshot["files"][number]
-type SidebarViewMode = "changes" | "history"
+type SidebarViewMode = "changes" | "history" | "files"
 const EMPTY_CHECKED_PATHS: Record<string, boolean> = {}
 
 export function shouldLoadDiffPatchNow(args: {
@@ -100,6 +102,9 @@ interface RightSidebarProps extends DiffFileActions {
   onSetupGitHub: (args: { owner: string; name: string; visibility: "public" | "private"; description: string }) => Promise<unknown>
   onCommit: (args: { paths: string[]; summary: string; description: string; mode: DiffCommitMode }) => Promise<DiffCommitResult | null>
   onSyncWithRemote: (action: "fetch" | "pull" | "push" | "publish") => Promise<unknown>
+  onListProjectFiles: () => Promise<ProjectFileTreeSnapshot>
+  onOpenProjectFile: (absolutePath: string, kind: ProjectFileTreeEntry["kind"]) => void
+  onCopyProjectFilePath: (absolutePath: string) => void
   onDiffRenderModeChange: (mode: DiffRenderMode) => void
   onWrapLinesChange: (wrap: boolean) => void
   onClose: () => void
@@ -901,6 +906,119 @@ function MergeBranchModal({
   )
 }
 
+function formatProjectFileSize(size?: number) {
+  if (size === undefined) return ""
+  if (size < 1_024) return `${size} B`
+  if (size < 1024 * 1024) return `${Math.round(size / 102.4) / 10} KB`
+  return `${Math.round(size / (1024 * 102.4)) / 10} MB`
+}
+
+function ProjectFilesView({
+  snapshot,
+  isLoading,
+  error,
+  onRefresh,
+  onOpenEntry,
+  onCopyPath,
+}: {
+  snapshot: ProjectFileTreeSnapshot | null
+  isLoading: boolean
+  error: string | null
+  onRefresh: () => void
+  onOpenEntry: (entry: ProjectFileTreeEntry) => void
+  onCopyPath: (entry: ProjectFileTreeEntry) => void
+}) {
+  const entries = snapshot?.entries ?? []
+
+  if (isLoading && !snapshot) {
+    return (
+      <div className="flex h-full items-center justify-center gap-2 px-6 py-3 text-sm text-muted-foreground">
+        <LoaderCircle className="h-4 w-4 animate-spin" />
+        <span>Loading files...</span>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex h-full items-center justify-center px-6 py-3 text-center">
+        <div className="flex max-w-[300px] flex-col items-center gap-3">
+          <p className="text-sm text-muted-foreground">{error}</p>
+          <Button size="sm" variant="secondary" onClick={onRefresh}>
+            Retry
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  if (entries.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center px-6 py-3 text-center">
+        <div className="flex max-w-[280px] flex-col items-center gap-3">
+          <p className="text-sm text-muted-foreground">No files found.</p>
+          <Button size="sm" variant="secondary" onClick={onRefresh}>
+            Refresh
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="p-1.5 pb-8">
+      {snapshot?.truncated ? (
+        <div className="mb-1.5 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          Showing the first {entries.length} entries.
+        </div>
+      ) : null}
+      <div className="space-y-[1px]">
+        {entries.map((entry) => {
+          const isDirectory = entry.kind === "directory"
+          const sizeLabel = formatProjectFileSize(entry.size)
+
+          return (
+            <div
+              key={`${entry.kind}:${entry.path}`}
+              className="group flex min-w-0 items-center gap-1 rounded-md py-0.5 pr-1 text-sm hover:bg-muted/50"
+              style={{ paddingLeft: `${8 + entry.depth * 14}px` }}
+              title={entry.absolutePath}
+            >
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-2 rounded-sm py-1 text-left"
+                onClick={() => onOpenEntry(entry)}
+              >
+                {isDirectory ? (
+                  <Folder className="h-3.5 w-3.5 shrink-0 text-sky-500" />
+                ) : (
+                  <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                )}
+                <span className="min-w-0 flex-1 truncate text-foreground/90">{entry.name}</span>
+                {sizeLabel ? <span className="hidden shrink-0 text-[11px] text-muted-foreground/70 xl:inline">{sizeLabel}</span> : null}
+              </button>
+              <div className="flex shrink-0 items-center gap-0 opacity-0 transition-opacity group-hover:opacity-100">
+                <IconButton
+                  label={isDirectory ? "Open folder" : "Open file"}
+                  onClick={() => onOpenEntry(entry)}
+                >
+                  {isDirectory ? <FolderOpen className="h-3.5 w-3.5" /> : <Code className="h-3.5 w-3.5" />}
+                </IconButton>
+                <IconButton
+                  label="Copy path"
+                  onClick={() => onCopyPath(entry)}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </IconButton>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function BranchSwitcher({
   currentBranchName,
   onListBranches,
@@ -1443,6 +1561,9 @@ function RightSidebarImpl({
   onSetupGitHub,
   onCommit,
   onSyncWithRemote,
+  onListProjectFiles,
+  onOpenProjectFile,
+  onCopyProjectFilePath,
   onLoadPatch,
   onDiffRenderModeChange,
   onWrapLinesChange,
@@ -1465,6 +1586,9 @@ function RightSidebarImpl({
   const [patchesByPath, setPatchesByPath] = useState<Record<string, string>>({})
   const [patchErrorsByPath, setPatchErrorsByPath] = useState<Record<string, string>>({})
   const [loadingPatchPaths, setLoadingPatchPaths] = useState<Record<string, boolean>>({})
+  const [projectFiles, setProjectFiles] = useState<ProjectFileTreeSnapshot | null>(null)
+  const [isLoadingProjectFiles, setIsLoadingProjectFiles] = useState(false)
+  const [projectFilesError, setProjectFilesError] = useState<string | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const patchDigestsByPathRef = useRef<Record<string, string>>({})
   const filePaths = useMemo(() => diffs.files.map((file) => file.path), [diffs.files])
@@ -1508,13 +1632,39 @@ function RightSidebarImpl({
   useEffect(() => {
     if (!projectId) return
     const previousHasChanges = previousHasChangesRef.current
-    if (previousHasChanges !== hasChanges) {
+    if (previousHasChanges !== hasChanges && viewMode !== "files") {
       setViewMode(projectId, hasChanges ? "changes" : "history")
       previousHasChangesRef.current = hasChanges
       return
     }
     previousHasChangesRef.current = hasChanges
-  }, [hasChanges, projectId, setViewMode])
+  }, [hasChanges, projectId, setViewMode, viewMode])
+
+  useEffect(() => {
+    setProjectFiles(null)
+    setProjectFilesError(null)
+  }, [projectId])
+
+  const loadProjectFiles = useCallback(async () => {
+    if (!projectId || isLoadingProjectFiles) return
+    setIsLoadingProjectFiles(true)
+    setProjectFilesError(null)
+    try {
+      const snapshot = await onListProjectFiles()
+      setProjectFiles(snapshot)
+    } catch (error) {
+      setProjectFilesError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsLoadingProjectFiles(false)
+    }
+  }, [isLoadingProjectFiles, onListProjectFiles, projectId])
+
+  useEffect(() => {
+    if (viewMode !== "files" || !projectId) return
+    if (projectFilesError) return
+    if (projectFiles?.projectId === projectId || isLoadingProjectFiles) return
+    void loadProjectFiles()
+  }, [isLoadingProjectFiles, loadProjectFiles, projectFiles?.projectId, projectFilesError, projectId, viewMode])
 
   const selectedPaths = useMemo(
     () => diffs.files.filter((file) => checkedPaths[file.path] ?? true).map((file) => file.path),
@@ -1653,21 +1803,36 @@ function RightSidebarImpl({
     }
   }, [diffs.files, loadingPatchPaths, onLoadPatch, patchesByPath])
 
+  const handleOpenProjectFileEntry = useCallback((entry: ProjectFileTreeEntry) => {
+    onOpenProjectFile(entry.absolutePath, entry.kind)
+  }, [onOpenProjectFile])
+
+  const handleCopyProjectFileEntryPath = useCallback((entry: ProjectFileTreeEntry) => {
+    onCopyProjectFilePath(entry.absolutePath)
+  }, [onCopyProjectFilePath])
+
   return (
     <div className="h-full min-h-0 border-l border-border bg-background md:min-w-[370px]">
       <div className="flex h-full min-h-0 flex-col">
         <div className="flex shrink-0 items-center gap-2 border-b border-border pl-2.5 pr-2 py-2">
           <div className="flex min-w-0 flex-1 items-center gap-2">
-            <BranchSwitcher
-              currentBranchName={diffs.branchName}
-              onListBranches={onListBranches}
-              onPreviewMergeBranch={onPreviewMergeBranch}
-              onMergeBranch={onMergeBranch}
-              onCheckoutBranch={onCheckoutBranch}
-              onCreateBranch={onCreateBranch}
-            />
+            {viewMode === "files" ? (
+              <div className="flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-sm">
+                <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="truncate">Files</span>
+              </div>
+            ) : (
+              <BranchSwitcher
+                currentBranchName={diffs.branchName}
+                onListBranches={onListBranches}
+                onPreviewMergeBranch={onPreviewMergeBranch}
+                onMergeBranch={onMergeBranch}
+                onCheckoutBranch={onCheckoutBranch}
+                onCreateBranch={onCreateBranch}
+              />
+            )}
           </div>
-          {diffs.status === "ready" ? (
+          {viewMode !== "files" && diffs.status === "ready" ? (
             !hasRemoteOrigin ? (
               <Button
                 variant="default"
@@ -1778,6 +1943,10 @@ function RightSidebarImpl({
                     />
                     <span>{selectedCount} files</span>
                   </div>
+                ) : viewMode === "files" ? (
+                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground/70">
+                    <span>{projectFiles?.entries.length ?? 0} files</span>
+                  </div>
                 ) : <div />}
                 <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2">
                   <div className="pointer-events-auto">
@@ -1792,6 +1961,7 @@ function RightSidebarImpl({
                       options={[
                         { value: "changes", label: "Changes"},
                         { value: "history", label: "History" },
+                        { value: "files", label: "Files" },
                       ]}
                     />
                   </div>
@@ -1820,12 +1990,30 @@ function RightSidebarImpl({
                       <WrapText className="h-4 w-4" />
                     </IconButton>
                   </div>
+                ) : viewMode === "files" ? (
+                  <div className="flex items-center gap-1">
+                    <IconButton
+                      label="Refresh files"
+                      onClick={() => void loadProjectFiles()}
+                    >
+                      {isLoadingProjectFiles ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                    </IconButton>
+                  </div>
                 ) : <div />}
               </div>
             </div>
           </div>
           <div ref={scrollContainerRef} className="h-full overflow-y-auto [scrollbar-gutter:stable]">
-            {diffs.status === "no_repo" ? (
+            {viewMode === "files" ? (
+              <ProjectFilesView
+                snapshot={projectFiles}
+                isLoading={isLoadingProjectFiles}
+                error={projectFilesError}
+                onRefresh={() => void loadProjectFiles()}
+                onOpenEntry={handleOpenProjectFileEntry}
+                onCopyPath={handleCopyProjectFileEntryPath}
+              />
+            ) : diffs.status === "no_repo" ? (
               <div className="flex h-full items-center justify-center px-6 py-3 text-center">
                 <div className="flex max-w-[280px] flex-col items-center gap-3">
                   <p className="text-sm text-muted-foreground">Initialize git here to start tracking branches, diffs, and history.</p>

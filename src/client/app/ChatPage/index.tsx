@@ -5,7 +5,6 @@ import { useOutletContext } from "react-router-dom"
 import type { ChatInputHandle } from "../../components/chat-ui/ChatInput"
 import { ChatNavbar } from "../../components/chat-ui/ChatNavbar"
 import { RightSidebar } from "../../components/chat-ui/RightSidebar"
-import { useAppDialog } from "../../components/ui/app-dialog"
 import { Card, CardContent } from "../../components/ui/card"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "../../components/ui/resizable"
 import { actionMatchesEvent, getResolvedKeybindings } from "../../lib/keybindings"
@@ -26,6 +25,7 @@ import { useRightSidebarToggleAnimation } from "../useRightSidebarToggleAnimatio
 import { useStickyChatFocus } from "../useStickyChatFocus"
 import { useTerminalToggleAnimation } from "../useTerminalToggleAnimation"
 import type { KannaState } from "../useKannaState"
+import type { ProjectFileTreeEntry, ProjectFileTreeSnapshot } from "../../../shared/types"
 import { getNextMeasuredInputHeight, getTranscriptPaddingBottom } from "../useKannaState"
 import { ChatInputDock } from "./ChatInputDock"
 import { ChatTranscriptViewport } from "./ChatTranscriptViewport"
@@ -435,7 +435,6 @@ function ChatWorkspace({
 
 export function ChatPage() {
   const state = useOutletContext<KannaState>()
-  const dialog = useAppDialog()
   const layoutRootRef = useRef<HTMLDivElement>(null)
   const transcriptListRef = useRef<LegendListRef | null>(null)
   const isAtEndRef = useRef(true)
@@ -446,7 +445,9 @@ export function ChatPage() {
   const { inputRef, syncInputHeight, transcriptPaddingBottom } = useTranscriptPaddingBottom()
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const showEmptyState = state.messages.length === 0 && state.runtime?.title === "New Chat"
-  const projectId = state.activeProjectId
+  const isGeneralChat = Boolean(state.runtime?.isGeneralChat)
+  const projectId = isGeneralChat ? null : state.activeProjectId
+  const uploadProjectId = state.runtime?.projectId ?? state.activeProjectId
   const projectTerminalLayout = useTerminalLayoutStore((store) => (projectId ? store.projects[projectId] : undefined))
   const terminalLayout = projectTerminalLayout ?? DEFAULT_PROJECT_TERMINAL_LAYOUT
   const projectRightSidebarVisibility = useRightSidebarStore((store) => (projectId ? store.projects[projectId] : undefined))
@@ -623,32 +624,8 @@ export function ChatPage() {
 
   const handleToggleRightSidebar = useCallback(() => {
     if (!projectId) return
-
-    if (showRightSidebar) {
-      toggleRightSidebar(projectId)
-      return
-    }
-
-    if (state.chatDiffSnapshot?.status === "no_repo") {
-      void (async () => {
-        const confirmed = await dialog.confirm({
-          title: "Initialize Git?",
-          description: "Initialize a local git repository in this project?",
-          confirmLabel: "Init Git",
-          cancelLabel: "Cancel",
-        })
-        if (!confirmed) return
-
-        const result = await handleInitializeGit()
-        if (result?.ok && !showRightSidebar) {
-          toggleRightSidebar(projectId)
-        }
-      })()
-      return
-    }
-
     toggleRightSidebar(projectId)
-  }, [dialog, handleInitializeGit, projectId, showRightSidebar, state.chatDiffSnapshot?.status, toggleRightSidebar])
+  }, [projectId, toggleRightSidebar])
 
   const handleCancel = useCallback(() => {
     void state.handleCancel()
@@ -657,6 +634,25 @@ export function ChatPage() {
   const handleOpenExternal = useCallback<NonNullable<ComponentProps<typeof ChatNavbar>["onOpenExternal"]>>((action, editor) => {
     void state.handleOpenExternal(action, editor)
   }, [state.handleOpenExternal])
+
+  const handleListProjectFiles = useCallback(async () => {
+    if (!projectId) {
+      throw new Error("Project not found")
+    }
+    return await state.socket.command<ProjectFileTreeSnapshot>({
+      type: "filesystem.listProjectFiles",
+      projectId,
+    })
+  }, [projectId, state.socket])
+
+  const handleOpenProjectFile = useCallback((absolutePath: string, kind: ProjectFileTreeEntry["kind"]) => {
+    const action = kind === "directory" ? "open_finder" : "open_editor"
+    void state.handleOpenExternalPath(action, absolutePath, state.runtime?.machineId)
+  }, [state.handleOpenExternalPath, state.runtime?.machineId])
+
+  const handleCopyProjectFilePath = useCallback((absolutePath: string) => {
+    void state.handleCopyPath(absolutePath)
+  }, [state.handleCopyPath])
 
   const handleRemoveTerminal = useCallback((currentProjectId: string, terminalId: string) => {
     void state.socket.command({ type: "terminal.close", terminalId }).catch(() => {})
@@ -870,12 +866,12 @@ export function ChatPage() {
           onOpenSidebar={state.openSidebar}
           onExpandSidebar={state.expandSidebar}
           onNewChat={state.handleCompose}
-          localPath={state.navbarLocalPath}
+          localPath={isGeneralChat ? undefined : state.navbarLocalPath}
           embeddedTerminalVisible={showTerminalPane}
           onToggleEmbeddedTerminal={projectId ? handleToggleEmbeddedTerminal : undefined}
           rightSidebarVisible={showRightSidebar}
           onToggleRightSidebar={projectId ? handleToggleRightSidebar : undefined}
-          onOpenExternal={handleOpenExternal}
+          onOpenExternal={isGeneralChat ? undefined : handleOpenExternal}
           onExportTranscript={state.activeChatId ? () => void state.handleShareChat(state.activeChatId) : undefined}
           canExportTranscript={Boolean(state.activeChatId) && !state.isExportingStandalone}
           isExportingTranscript={state.isExportingStandalone}
@@ -897,7 +893,7 @@ export function ChatPage() {
           messages={state.messages}
           queuedMessages={state.queuedMessages}
           transcriptPaddingBottom={transcriptPaddingBottom}
-          localPath={state.runtime?.localPath}
+          localPath={isGeneralChat ? undefined : state.runtime?.localPath}
           latestToolIds={state.latestToolIds}
           isHistoryLoading={state.isHistoryLoading}
           hasOlderHistory={state.hasOlderHistory}
@@ -935,7 +931,7 @@ export function ChatPage() {
         hasSelectedProject={state.hasSelectedProject}
         runtimeStatus={state.runtimeStatus}
         canCancel={state.canCancel}
-        projectId={projectId}
+        projectId={uploadProjectId}
         activeProvider={state.runtime?.provider ?? null}
         availableProviders={state.availableProviders}
         contextWindowSnapshot={contextWindowSnapshot}
@@ -1003,6 +999,9 @@ export function ChatPage() {
       onSetupGitHub: handleSetupGitHub,
       onCommit: handleCommitDiffs,
       onSyncWithRemote: handleSyncBranch,
+      onListProjectFiles: handleListProjectFiles,
+      onOpenProjectFile: handleOpenProjectFile,
+      onCopyProjectFilePath: handleCopyProjectFilePath,
       onDiffRenderModeChange: setDiffRenderMode,
       onWrapLinesChange: setWrapDiffLines,
       onClose: handleCloseRightSidebar,
@@ -1015,6 +1014,7 @@ export function ChatPage() {
     handleCommitDiffs,
     handleCopyDiffFilePath,
     handleCopyDiffRelativePath,
+    handleCopyProjectFilePath,
     handleCreateBranch,
     handleDiscardDiffFile,
     handleGenerateCommitMessage,
@@ -1027,6 +1027,8 @@ export function ChatPage() {
     handleMergeBranch,
     handleOpenDiffFile,
     handleOpenDiffInFinder,
+    handleListProjectFiles,
+    handleOpenProjectFile,
     handlePreviewMergeBranch,
     handleSetupGitHub,
     handleSyncBranch,

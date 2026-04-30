@@ -17,10 +17,11 @@ import { ChatPage } from "./ChatPage"
 import { LocalProjectsPage } from "./LocalProjectsPage"
 import { SettingsPage } from "./SettingsPage"
 import { useKannaState } from "./useKannaState"
-import type { AppSettingsSnapshot } from "../../shared/types"
+import type { AppSettingsSnapshot, MachineId } from "../../shared/types"
 
 const VERSION_SEEN_STORAGE_KEY = "kanna:last-seen-version"
 const AUTH_STATUS_RETRY_DELAY_MS = 500
+const SAVED_PASSWORD_STORAGE_KEY = "kanna:saved-password"
 
 interface AuthStatusResponse {
   enabled: boolean
@@ -44,14 +45,44 @@ export function shouldRetryAuthStatusRequest(responseOk: boolean | null) {
   return responseOk !== true
 }
 
+export function readSavedPassword(storage: Pick<Storage, "getItem"> = window.localStorage) {
+  try {
+    const value = storage.getItem(SAVED_PASSWORD_STORAGE_KEY)
+    return value && value.length > 0 ? value : null
+  } catch {
+    return null
+  }
+}
+
+export function clearSavedPassword(storage: Pick<Storage, "removeItem"> = window.localStorage) {
+  try {
+    storage.removeItem(SAVED_PASSWORD_STORAGE_KEY)
+  } catch {
+    // Storage can be blocked in hardened browser contexts.
+  }
+}
+
 function PasswordScreen({
   error,
   onSubmit,
 }: {
   error: string | null
-  onSubmit: (password: string) => Promise<void>
+  onSubmit: (password: string) => Promise<boolean>
 }) {
-  const [password, setPassword] = useState("")
+  const [password, setPassword] = useState(() => {
+    try {
+      return window.localStorage.getItem(SAVED_PASSWORD_STORAGE_KEY) ?? ""
+    } catch {
+      return ""
+    }
+  })
+  const [rememberPassword, setRememberPassword] = useState(() => {
+    try {
+      return Boolean(window.localStorage.getItem(SAVED_PASSWORD_STORAGE_KEY))
+    } catch {
+      return false
+    }
+  })
   const [submitting, setSubmitting] = useState(false)
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -59,8 +90,20 @@ function PasswordScreen({
     if (!password || submitting) return
     setSubmitting(true)
     try {
-      await onSubmit(password)
-      setPassword("")
+      const success = await onSubmit(password)
+      if (!success) return
+      try {
+        if (rememberPassword) {
+          window.localStorage.setItem(SAVED_PASSWORD_STORAGE_KEY, password)
+        } else {
+          window.localStorage.removeItem(SAVED_PASSWORD_STORAGE_KEY)
+        }
+      } catch {
+        // If storage is unavailable, login should still work normally.
+      }
+      if (!rememberPassword) {
+        setPassword("")
+      }
     } finally {
       setSubmitting(false)
     }
@@ -97,6 +140,16 @@ function PasswordScreen({
               disabled={submitting}
               className="h-11 rounded-2xl bg-background"
             />
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={rememberPassword}
+                onChange={(event) => setRememberPassword(event.target.checked)}
+                disabled={submitting}
+                className="h-4 w-4 rounded border-border accent-primary"
+              />
+              <span>Save password on this browser</span>
+            </label>
             <Button
               type="submit"
               disabled={submitting || password.length === 0}
@@ -114,6 +167,23 @@ function PasswordScreen({
 function useAppAuthState() {
   const [state, setState] = useState<AppAuthState>({ status: "checking" })
   const retryTimeoutRef = useRef<number | null>(null)
+  const attemptedSavedPasswordRef = useRef<string | null>(null)
+
+  const performLogin = useCallback(async (password: string) => {
+    try {
+      const response = await fetch("/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ password, next: window.location.pathname + window.location.search }),
+      })
+      return response.ok
+    } catch {
+      return false
+    }
+  }, [])
 
   const refresh = useCallback(async () => {
     if (retryTimeoutRef.current !== null) {
@@ -147,8 +217,26 @@ function useAppAuthState() {
     }
 
     const payload = await response.json() as Partial<AuthStatusResponse>
-    setState(getAppAuthStateFromStatus(payload))
-  }, [])
+    const nextState = getAppAuthStateFromStatus(payload)
+
+    if (nextState.status === "locked") {
+      const savedPassword = readSavedPassword()
+      if (savedPassword && attemptedSavedPasswordRef.current !== savedPassword) {
+        attemptedSavedPasswordRef.current = savedPassword
+        setState({ status: "checking" })
+        const success = await performLogin(savedPassword)
+        if (success) {
+          setState({ status: "ready" })
+          return
+        }
+        clearSavedPassword()
+        setState({ status: "locked", error: "Saved password is no longer valid. Enter it again." })
+        return
+      }
+    }
+
+    setState(nextState)
+  }, [performLogin])
 
   useEffect(() => {
     void refresh()
@@ -160,22 +248,15 @@ function useAppAuthState() {
   }, [refresh])
 
   const submitPassword = useCallback(async (password: string) => {
-    const response = await fetch("/auth/login", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({ password, next: window.location.pathname + window.location.search }),
-    })
-
-    if (!response.ok) {
+    const success = await performLogin(password)
+    if (!success) {
       setState({ status: "locked", error: "Incorrect password. Try again." })
-      return
+      return false
     }
 
     await refresh()
-  }, [refresh])
+    return true
+  }, [performLogin, refresh])
 
   return {
     state,
@@ -229,11 +310,14 @@ function KannaLayout() {
   const handleSidebarDeleteChat = useCallback((chat: Parameters<typeof state.handleDeleteChat>[0]) => {
     void state.handleDeleteChat(chat)
   }, [state.handleDeleteChat])
+  const handleSidebarRenameProject = useCallback((projectId: string, currentTitle: string) => {
+    void state.handleRenameProject(projectId, currentTitle)
+  }, [state.handleRenameProject])
   const handleSidebarCopyPath = useCallback((localPath: string) => {
     void state.handleCopyPath(localPath)
   }, [state.handleCopyPath])
-  const handleSidebarOpenExternalPath = useCallback((action: "open_finder" | "open_editor", localPath: string) => {
-    void state.handleOpenExternalPath(action, localPath)
+  const handleSidebarOpenExternalPath = useCallback((action: "open_finder" | "open_editor", localPath: string, machineId?: MachineId) => {
+    void state.handleOpenExternalPath(action, localPath, machineId)
   }, [state.handleOpenExternalPath])
   const handleSidebarHideProject = useCallback((projectId: string) => {
     void state.handleHideProject(projectId)
@@ -266,6 +350,7 @@ function KannaLayout() {
       onArchiveChat={handleSidebarArchiveChat}
       onOpenArchivedChat={handleOpenArchivedChat}
       onDeleteChat={handleSidebarDeleteChat}
+      onRenameProject={handleSidebarRenameProject}
       onOpenAddProjectModal={handleOpenAddProjectModal}
       onCopyPath={handleSidebarCopyPath}
       onOpenExternalPath={handleSidebarOpenExternalPath}
@@ -282,6 +367,7 @@ function KannaLayout() {
     handleSidebarCreateChat,
     handleSidebarArchiveChat,
     handleSidebarDeleteChat,
+    handleSidebarRenameProject,
     handleOpenArchivedChat,
     handleSidebarForkChat,
     handleSidebarOpenExternalPath,

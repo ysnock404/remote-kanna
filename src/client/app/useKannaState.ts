@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useShallow } from "zustand/react/shallow"
-import { PROVIDERS, type AgentProvider, type AppSettingsPatch, type AppSettingsSnapshot, type AskUserQuestionAnswerMap, type ChatAttachment, type ChatDiffSnapshot, type ChatHistoryPage, type KeybindingsSnapshot, type LlmProviderSnapshot, type LlmProviderValidationResult, type MachineId, type ModelOptions, type ProviderCatalogEntry, type QueuedChatMessage, type StandaloneTranscriptExportCommandResult, type TranscriptEntry, type UpdateInstallResult, type UpdateSnapshot, type UserPromptEntry } from "../../shared/types"
-import { getProjectLocationKey, LOCAL_MACHINE_ID } from "../../shared/project-location"
+import { PROVIDERS, type AgentProvider, type AppSettingsPatch, type AppSettingsSnapshot, type AskUserQuestionAnswerMap, type ChatAttachment, type ChatDiffSnapshot, type ChatHistoryPage, type DirectoryBrowserSnapshot, type KeybindingsSnapshot, type LlmProviderSnapshot, type LlmProviderValidationResult, type MachineId, type ModelOptions, type ProviderCatalogEntry, type QueuedChatMessage, type StandaloneTranscriptExportCommandResult, type TranscriptEntry, type UpdateInstallResult, type UpdateSnapshot, type UserPromptEntry } from "../../shared/types"
+import { getProjectLocationKey, LOCAL_MACHINE_ID, normalizeMachineId } from "../../shared/project-location"
 import { NEW_CHAT_COMPOSER_ID, type ComposerState, useChatPreferencesStore } from "../stores/chatPreferencesStore"
 import { useRightSidebarStore } from "../stores/rightSidebarStore"
 import { useTerminalLayoutStore } from "../stores/terminalLayoutStore"
@@ -15,6 +15,7 @@ import type { AskUserQuestionItem } from "../components/messages/types"
 import type { OpenLocalLinkTarget } from "../components/messages/shared"
 import { useAppDialog } from "../components/ui/app-dialog"
 import { useTheme } from "../hooks/useTheme"
+import { copyTextToClipboard } from "../lib/clipboard"
 import { processTranscriptMessages } from "../lib/parseTranscript"
 import { generateUUID } from "../lib/utils"
 import { canCancelStatus, getLatestToolIds, isProcessingStatus } from "./derived"
@@ -28,6 +29,7 @@ function sameRuntime(left: ChatSnapshot["runtime"] | null | undefined, right: Ch
     && left.projectId === right.projectId
     && left.machineId === right.machineId
     && left.machineLabel === right.machineLabel
+    && left.isGeneralChat === right.isGeneralChat
     && left.localPath === right.localPath
     && left.title === right.title
     && left.status === right.status
@@ -583,6 +585,8 @@ function downloadTextFile(fileName: string, contents: string, contentType = "app
   URL.revokeObjectURL(url)
 }
 
+const SELECTED_MACHINE_STORAGE_KEY = "kanna:selected-machine"
+
 async function isServerReady(fetchImpl: typeof fetch = fetch) {
   const response = await fetchImpl(getUiUpdateReadinessPath(), {
     method: "GET",
@@ -647,6 +651,7 @@ export interface KannaState {
   activeProjectId: string | null
   sidebarData: SidebarData
   localProjects: LocalProjectsSnapshot | null
+  selectedMachineId: MachineId
   updateSnapshot: UpdateSnapshot | null
   chatSnapshot: ChatSnapshot | null
   chatDiffSnapshot: ChatDiffSnapshot | null
@@ -685,8 +690,11 @@ export interface KannaState {
   expandSidebar: () => void
   openAddProjectModal: () => void
   closeAddProjectModal: () => void
+  setSelectedMachineId: (machineId: MachineId) => void
+  handleListDirectories: (machineId: MachineId, path?: string) => Promise<DirectoryBrowserSnapshot>
   loadOlderHistory: () => Promise<void>
   handleCreateChat: (projectId: string) => Promise<void>
+  handleCreateGeneralChat: () => Promise<void>
   handleForkChat: (chat: SidebarChatRow) => Promise<void>
   handleOpenLocalProject: (localPath: string, machineId?: MachineId) => Promise<void>
   handleCreateProject: (project: ProjectRequest) => Promise<void>
@@ -708,11 +716,12 @@ export interface KannaState {
   handleArchiveChat: (chat: SidebarChatRow) => Promise<void>
   handleOpenArchivedChat: (chatId: string) => Promise<void>
   handleDeleteChat: (chat: SidebarChatRow) => Promise<void>
+  handleRenameProject: (projectId: string, currentTitle: string) => Promise<void>
   handleHideProject: (projectId: string) => Promise<void>
   handleReorderProjectGroups: (projectIds: string[]) => Promise<void>
   handleCopyPath: (localPath: string) => Promise<void>
   handleOpenExternal: (action: OpenExternalAction, editor?: EditorOpenSettings) => Promise<void>
-  handleOpenExternalPath: (action: "open_finder" | "open_editor", localPath: string) => Promise<void>
+  handleOpenExternalPath: (action: "open_finder" | "open_editor", localPath: string, machineId?: MachineId) => Promise<void>
   handleOpenLocalLink: (target: OpenLocalLinkTarget, action?: OpenExternalAction, editor?: EditorOpenSettings) => Promise<void>
   handleCompose: () => void
   handleAskUserQuestion: (
@@ -741,6 +750,13 @@ export function useKannaState(activeChatId: string | null): KannaState {
   const [sidebarData, setSidebarData] = useState<SidebarData>({ projectGroups: [] })
   const [optimisticSidebarProjectOrder, setOptimisticSidebarProjectOrder] = useState<string[] | null>(null)
   const [localProjects, setLocalProjects] = useState<LocalProjectsSnapshot | null>(null)
+  const [selectedMachineId, setSelectedMachineIdState] = useState<MachineId>(() => {
+    try {
+      return normalizeMachineId(window.localStorage.getItem(SELECTED_MACHINE_STORAGE_KEY))
+    } catch {
+      return LOCAL_MACHINE_ID
+    }
+  })
   const [updateSnapshot, setUpdateSnapshot] = useState<UpdateSnapshot | null>(null)
   const [chatSnapshot, setChatSnapshot] = useState<ChatSnapshot | null>(null)
   const [olderHistoryEntries, setOlderHistoryEntries] = useState<TranscriptEntry[]>([])
@@ -796,6 +812,16 @@ export function useKannaState(activeChatId: string | null): KannaState {
     [sidebarData, sidebarProjectGroups]
   )
 
+  const setSelectedMachineId = useCallback((machineId: MachineId) => {
+    const normalized = normalizeMachineId(machineId)
+    setSelectedMachineIdState(normalized)
+    try {
+      window.localStorage.setItem(SELECTED_MACHINE_STORAGE_KEY, normalized)
+    } catch {
+      // Ignore storage failures; the in-memory selection is enough for this session.
+    }
+  }, [])
+
   useEffect(() => socket.onStatus(setConnectionStatus), [socket])
 
   useEffect(() => {
@@ -823,6 +849,8 @@ export function useKannaState(activeChatId: string | null): KannaState {
   useEffect(() => {
     return socket.subscribe<LocalProjectsSnapshot>({ type: "local-projects" }, (snapshot) => {
       setLocalProjects(snapshot)
+      const machineIds = new Set((snapshot.machines ?? [{ id: LOCAL_MACHINE_ID }]).map((machine) => machine.id))
+      setSelectedMachineIdState((current) => machineIds.has(current) ? current : LOCAL_MACHINE_ID)
       setLocalProjectsReady(true)
       setCommandError(null)
     })
@@ -959,6 +987,14 @@ export function useKannaState(activeChatId: string | null): KannaState {
       throw error
     }
   }, [handleReadAppSettings, socket])
+
+  const handleListDirectories = useCallback(async (machineId: MachineId, path?: string) => {
+    return await socket.command<DirectoryBrowserSnapshot>({
+      type: "filesystem.listDirectories",
+      machineId,
+      path,
+    })
+  }, [socket])
 
   const handleReadLlmProvider = useCallback(async () => {
     try {
@@ -1157,7 +1193,11 @@ export function useKannaState(activeChatId: string | null): KannaState {
       ?? selectedProjectId,
     [activeChatId, activeChatSnapshot?.runtime.projectId, selectedProjectId, sidebarProjectGroups]
   )
+  const activeProjectIsGeneralChat = Boolean(activeChatSnapshot?.runtime.isGeneralChat)
   const chatDiffSnapshot = useMemo(() => {
+    if (activeProjectIsGeneralChat) {
+      return null
+    }
     const currentDiffs = activeProjectId ? (projectDiffSnapshots[activeProjectId] ?? null) : null
     if (activeProjectId && currentDiffs) {
       lastActiveProjectDiffRef.current = {
@@ -1172,10 +1212,10 @@ export function useKannaState(activeChatId: string | null): KannaState {
     }
 
     return currentDiffs
-  }, [activeProjectId, projectDiffSnapshots])
+  }, [activeProjectId, activeProjectIsGeneralChat, projectDiffSnapshots])
 
   useEffect(() => {
-    if (!activeProjectId) {
+    if (!activeProjectId || activeProjectIsGeneralChat) {
       return
     }
 
@@ -1197,7 +1237,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     })
 
     return unsubscribe
-  }, [activeProjectId, socket])
+  }, [activeProjectId, activeProjectIsGeneralChat, socket])
   useEffect(() => {
     logKannaState("active snapshot resolved", {
       routeChatId: activeChatId,
@@ -1238,15 +1278,17 @@ export function useKannaState(activeChatId: string | null): KannaState {
   const isDraining = runtime?.isDraining ?? false
   const fallbackLocalProject = localProjects?.projects[0] ?? null
   const fallbackLocalProjectPath = fallbackLocalProject?.localPath ?? null
-  const navbarLocalPath =
-    runtime?.localPath
-    ?? fallbackLocalProjectPath
-    ?? sidebarProjectGroups[0]?.localPath
+  const navbarLocalPath = runtime?.isGeneralChat
+    ? undefined
+    : runtime?.localPath
+      ?? fallbackLocalProjectPath
+      ?? sidebarProjectGroups[0]?.localPath
   const hasSelectedProject = Boolean(
-    selectedProjectId
-    ?? runtime?.projectId
-    ?? sidebarProjectGroups[0]?.groupKey
-    ?? fallbackLocalProjectPath
+    runtime?.isGeneralChat
+    || selectedProjectId
+    || runtime?.projectId
+    || sidebarProjectGroups[0]?.groupKey
+    || fallbackLocalProjectPath
   )
 
   useEffect(() => {
@@ -1435,6 +1477,27 @@ export function useKannaState(activeChatId: string | null): KannaState {
   const handleCreateChat = useCallback(async (projectId: string) => {
     await startChatFromIntent({ kind: "project_id", projectId })
   }, [startChatFromIntent])
+
+  const handleCreateGeneralChat = useCallback(async () => {
+    try {
+      setStartingLocalPath("general-chat")
+      const chatPreferences = useChatPreferencesStore.getState()
+      const sourceComposerState = activeChatId
+        ? chatPreferences.getComposerState(activeChatId)
+        : chatPreferences.getComposerState(NEW_CHAT_COMPOSER_ID)
+      const result = await socket.command<{ chatId: string; projectId: string }>({ type: "chat.createGeneral" })
+      chatPreferences.initializeComposerForChat(result.chatId, { sourceState: sourceComposerState })
+      setSelectedProjectId(result.projectId)
+      setPendingChatId(result.chatId)
+      navigate(`/chat/${result.chatId}`)
+      setSidebarOpen(false)
+      setCommandError(null)
+    } catch (error) {
+      setCommandError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setStartingLocalPath(null)
+    }
+  }, [activeChatId, navigate, socket])
 
   const handleForkChat = useCallback(async (chat: SidebarChatRow) => {
     try {
@@ -1777,6 +1840,23 @@ export function useKannaState(activeChatId: string | null): KannaState {
     }
   }, [navigate, runtime?.projectId, socket])
 
+  const handleRenameProject = useCallback(async (projectId: string, currentTitle: string) => {
+    const nextTitle = await dialog.prompt({
+      title: "Rename project",
+      initialValue: currentTitle,
+      placeholder: "Project name",
+      confirmLabel: "Rename",
+    })
+    if (!nextTitle || nextTitle === currentTitle) return
+
+    try {
+      await socket.command({ type: "project.rename", projectId, title: nextTitle })
+      setCommandError(null)
+    } catch (error) {
+      setCommandError(error instanceof Error ? error.message : String(error))
+    }
+  }, [dialog, socket])
+
   const handleReorderProjectGroups = useCallback(async (projectIds: string[]) => {
     setOptimisticSidebarProjectOrder(projectIds)
     try {
@@ -1790,6 +1870,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
 
   const openExternal = useCallback(async (command: {
     action: OpenExternalAction
+    machineId?: MachineId
     localPath: string
     line?: number
     column?: number
@@ -1810,30 +1891,57 @@ export function useKannaState(activeChatId: string | null): KannaState {
   }, [socket])
 
   const handleOpenExternal = useCallback(async (action: OpenExternalAction, editor?: EditorOpenSettings) => {
-    const localPath = runtime?.localPath ?? localProjects?.projects[0]?.localPath ?? sidebarProjectGroups[0]?.localPath
-    if (!localPath) return
+    if (runtime?.isGeneralChat) {
+      return
+    }
+    const currentProjectGroup = activeProjectId
+      ? sidebarProjectGroups.find((group) => group.groupKey === activeProjectId)
+      : null
+    const localPath = runtime?.localPath ?? currentProjectGroup?.localPath ?? localProjects?.projects[0]?.localPath ?? sidebarProjectGroups[0]?.localPath
+    const machineId = runtime?.machineId ?? currentProjectGroup?.machineId ?? localProjects?.projects[0]?.machineId ?? sidebarProjectGroups[0]?.machineId
+    if (!localPath) {
+      console.warn("[kanna] Open external skipped: no project path", { action, activeProjectId })
+      return
+    }
     try {
+      console.log("[kanna] Open external requested", { action, localPath, machineId })
       await openExternal({
         action,
+        machineId,
         localPath,
         editor,
       })
+      console.log("[kanna] Open external sent", { action, localPath, machineId })
+      setCommandError(null)
     } catch (error) {
-      setCommandError(error instanceof Error ? error.message : String(error))
+      const message = error instanceof Error ? error.message : String(error)
+      console.error("[kanna] Open external failed", error)
+      setCommandError(message)
+      await dialog.alert({
+        title: "Open failed",
+        description: `${message}\n\n${localPath}`,
+        closeLabel: "Close",
+      })
     }
-  }, [localProjects?.projects, openExternal, runtime?.localPath, sidebarProjectGroups])
+  }, [activeProjectId, dialog, localProjects?.projects, openExternal, runtime?.isGeneralChat, runtime?.localPath, runtime?.machineId, sidebarProjectGroups])
 
   const handleCopyPath = useCallback(async (localPath: string) => {
     try {
-      if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-        throw new Error("Clipboard is not available")
-      }
-      await navigator.clipboard.writeText(localPath)
+      console.log("[kanna] Copy Path requested", localPath)
+      await copyTextToClipboard(localPath)
+      console.log("[kanna] Copy Path copied", localPath)
       setCommandError(null)
     } catch (error) {
-      setCommandError(error instanceof Error ? error.message : String(error))
+      const message = error instanceof Error ? error.message : String(error)
+      console.error("[kanna] Copy Path failed", error)
+      setCommandError(message)
+      await dialog.alert({
+        title: "Copy failed",
+        description: `${message}\n\n${localPath}`,
+        closeLabel: "Close",
+      })
     }
-  }, [])
+  }, [dialog])
 
   const handleOpenLocalLink = useCallback(async (
     target: OpenLocalLinkTarget,
@@ -1843,6 +1951,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     try {
       await openExternal({
         action,
+        machineId: runtime?.machineId,
         localPath: target.path,
         line: target.line,
         column: target.column,
@@ -1851,12 +1960,13 @@ export function useKannaState(activeChatId: string | null): KannaState {
     } catch (error) {
       setCommandError(error instanceof Error ? error.message : String(error))
     }
-  }, [openExternal])
+  }, [openExternal, runtime?.machineId])
 
-  const handleOpenExternalPath = useCallback(async (action: "open_finder" | "open_editor", localPath: string) => {
+  const handleOpenExternalPath = useCallback(async (action: "open_finder" | "open_editor", localPath: string, machineId?: MachineId) => {
     try {
       await openExternal({
         action,
+        machineId,
         localPath,
       })
     } catch (error) {
@@ -1926,10 +2036,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     }
 
     try {
-      if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-        throw new Error("Clipboard is not available")
-      }
-      await navigator.clipboard.writeText(standaloneShareUrl)
+      await copyTextToClipboard(standaloneShareUrl)
       return true
     } catch (error) {
       await dialog.alert({
@@ -2017,6 +2124,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     activeProjectId,
     sidebarData: resolvedSidebarData,
     localProjects,
+    selectedMachineId,
     updateSnapshot,
     chatSnapshot,
     chatDiffSnapshot,
@@ -2055,8 +2163,11 @@ export function useKannaState(activeChatId: string | null): KannaState {
     expandSidebar,
     openAddProjectModal,
     closeAddProjectModal,
+    setSelectedMachineId,
+    handleListDirectories,
     loadOlderHistory,
     handleCreateChat,
+    handleCreateGeneralChat,
     handleForkChat,
     handleOpenLocalProject,
     handleCreateProject,
@@ -2078,6 +2189,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     handleArchiveChat,
     handleOpenArchivedChat,
     handleDeleteChat,
+    handleRenameProject,
     handleHideProject,
     handleReorderProjectGroups,
     handleCopyPath,

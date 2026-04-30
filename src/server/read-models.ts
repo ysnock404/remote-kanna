@@ -4,6 +4,7 @@ import type {
   ChatSnapshot,
   KannaStatus,
   LocalProjectsSnapshot,
+  MachineAliases,
   MachineId,
   RemoteHostConfig,
   SidebarChatRow,
@@ -71,12 +72,14 @@ export function deriveSidebarData(
     drainingChatIds?: Set<string>
     remoteHosts?: RemoteHostConfig[]
     localMachineName?: string
+    machineAliases?: MachineAliases
   }
 ): SidebarData {
   const nowMs = options?.nowMs ?? Date.now()
   const drainingChatIds = options?.drainingChatIds ?? new Set<string>()
   const remoteHosts = options?.remoteHosts ?? []
   const localMachineName = options?.localMachineName ?? "Local"
+  const machineAliases = options?.machineAliases ?? {}
   const chatsByProjectId = new Map<string, ChatRecord[]>()
   const archivedChatsByProjectId = new Map<string, ChatRecord[]>()
   for (const chat of state.chatsById.values()) {
@@ -116,7 +119,8 @@ export function deriveSidebarData(
         status: deriveStatus(chat, activeStatuses.get(chat.id)),
         unread: chat.unread,
         machineId,
-        machineLabel: getMachineLabel(machineId, remoteHosts, localMachineName),
+        machineLabel: getMachineLabel(machineId, remoteHosts, localMachineName, machineAliases),
+        isGeneralChat: project.isGeneralChat || undefined,
         localPath: project.localPath,
         provider: chat.provider,
         lastMessageAt: chat.lastMessageAt,
@@ -134,8 +138,10 @@ export function deriveSidebarData(
     return {
       groupKey: project.id,
       machineId,
-      machineLabel: getMachineLabel(machineId, remoteHosts, localMachineName),
+      machineLabel: getMachineLabel(machineId, remoteHosts, localMachineName, machineAliases),
+      isGeneralChat: project.isGeneralChat || undefined,
       localPath: project.localPath,
+      title: project.title,
       chats,
       previewChats,
       olderChats,
@@ -151,7 +157,8 @@ export function deriveLocalProjectsSnapshot(
   state: StoreState,
   discoveredProjects: Array<{ machineId?: MachineId; localPath: string; title: string; modifiedAt: number }>,
   machineName: string,
-  remoteHosts: RemoteHostConfig[] = []
+  remoteHosts: RemoteHostConfig[] = [],
+  machineAliases: MachineAliases = {}
 ): LocalProjectsSnapshot {
   const projects = new Map<string, LocalProjectsSnapshot["projects"][number]>()
 
@@ -160,7 +167,7 @@ export function deriveLocalProjectsSnapshot(
     const normalizedPath = machineId === LOCAL_MACHINE_ID ? resolveLocalPath(project.localPath) : project.localPath
     projects.set(getProjectLocationKey(machineId, normalizedPath), {
       machineId,
-      machineLabel: getMachineLabel(machineId, remoteHosts, machineName),
+      machineLabel: getMachineLabel(machineId, remoteHosts, machineName, machineAliases),
       localPath: normalizedPath,
       title: project.title,
       source: "discovered",
@@ -169,7 +176,7 @@ export function deriveLocalProjectsSnapshot(
     })
   }
 
-  for (const project of [...state.projectsById.values()].filter((entry) => !entry.deletedAt)) {
+  for (const project of [...state.projectsById.values()].filter((entry) => !entry.deletedAt && !entry.isGeneralChat)) {
     const machineId = normalizeMachineId(project.machineId)
     const chats = [...state.chatsById.values()].filter((chat) => chat.projectId === project.id && !chat.deletedAt && !chat.archivedAt)
     const lastOpenedAt = chats.reduce(
@@ -179,7 +186,7 @@ export function deriveLocalProjectsSnapshot(
 
     projects.set(getProjectLocationKey(machineId, project.localPath), {
       machineId,
-      machineLabel: getMachineLabel(machineId, remoteHosts, machineName),
+      machineLabel: getMachineLabel(machineId, remoteHosts, machineName, machineAliases),
       localPath: project.localPath,
       title: project.title,
       source: "saved",
@@ -191,17 +198,17 @@ export function deriveLocalProjectsSnapshot(
   return {
     machine: {
       id: "local",
-      displayName: machineName,
+      displayName: getMachineLabel(LOCAL_MACHINE_ID, remoteHosts, machineName, machineAliases),
       platform: process.platform,
     },
     machines: [
       {
         id: "local",
-        displayName: machineName,
+        displayName: getMachineLabel(LOCAL_MACHINE_ID, remoteHosts, machineName, machineAliases),
         platform: process.platform,
         enabled: true,
       },
-      ...getRemoteMachineSummaries(remoteHosts),
+      ...getRemoteMachineSummaries(remoteHosts, machineAliases),
     ],
     projects: [...projects.values()].sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0)),
   }
@@ -216,6 +223,7 @@ export function deriveChatSnapshot(
   options?: {
     remoteHosts?: RemoteHostConfig[]
     localMachineName?: string
+    machineAliases?: MachineAliases
   }
 ): ChatSnapshot | null {
   const chat = state.chatsById.get(chatId)
@@ -227,7 +235,13 @@ export function deriveChatSnapshot(
     chatId: chat.id,
     projectId: project.id,
     machineId: normalizeMachineId(project.machineId),
-    machineLabel: getMachineLabel(normalizeMachineId(project.machineId), options?.remoteHosts ?? [], options?.localMachineName ?? "Local"),
+    machineLabel: getMachineLabel(
+      normalizeMachineId(project.machineId),
+      options?.remoteHosts ?? [],
+      options?.localMachineName ?? "Local",
+      options?.machineAliases ?? {}
+    ),
+    isGeneralChat: project.isGeneralChat || undefined,
     localPath: project.localPath,
     title: chat.title,
     status: deriveStatus(chat, activeStatuses.get(chat.id)),

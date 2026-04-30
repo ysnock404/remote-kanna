@@ -1,15 +1,6 @@
-import { ANALYTICS_ENDPOINT } from "../shared/analytics"
 import { PROD_SERVER_PORT } from "../shared/ports"
 import type { ShareMode } from "../shared/share"
 import { isTokenShareMode } from "../shared/share"
-interface AnalyticsRequestBody {
-  userId: string
-  environment: AnalyticsEnvironment
-  event: {
-    name: string
-    properties: Record<string, unknown>
-  }
-}
 
 export interface LaunchAnalyticsOptions {
   port: number
@@ -20,8 +11,8 @@ export interface LaunchAnalyticsOptions {
   strictPort: boolean
 }
 
-type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
 type AnalyticsEnvironment = "dev" | "prod"
+type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
 
 function isAnalyticsLoggingEnabled() {
   return process.env.KANNA_LOG_ANALYTICS === "1"
@@ -41,11 +32,9 @@ interface AnalyticsSettings {
 
 export class KannaAnalyticsReporter implements AnalyticsReporter {
   private readonly settings: AnalyticsSettings
-  private readonly endpoint: string
-  private readonly fetchImpl: FetchLike
   private readonly currentVersion: string
   private readonly environment: AnalyticsEnvironment
-  private queue = Promise.resolve()
+  readonly queue = Promise.resolve()
 
   constructor(args: {
     settings: AnalyticsSettings
@@ -57,58 +46,25 @@ export class KannaAnalyticsReporter implements AnalyticsReporter {
     this.settings = args.settings
     this.currentVersion = args.currentVersion
     this.environment = args.environment
-    this.endpoint = args.endpoint ?? ANALYTICS_ENDPOINT
-    this.fetchImpl = args.fetchImpl ?? fetch
   }
 
   track(eventName: string, properties?: Record<string, unknown>) {
-    const { analyticsEnabled, analyticsUserId } = this.settings.getState()
-    if (!analyticsEnabled || !analyticsUserId) {
+    const { analyticsEnabled } = this.settings.getState()
+    if (!analyticsEnabled) {
       return
     }
 
-    const body: AnalyticsRequestBody = {
-      userId: analyticsUserId,
-      environment: this.environment,
-      event: {
-        name: eventName,
-        properties: this.buildEventProperties(properties),
-      },
+    if (isAnalyticsLoggingEnabled()) {
+      console.log("[remote-kanna/analytics] Analytics disabled; event not sent:", eventName, {
+        current_version: this.currentVersion,
+        environment: this.environment,
+        ...(properties ?? {}),
+      })
     }
-
-    this.queue = this.queue
-      .then(async () => {
-        const response = await this.fetchImpl(this.endpoint, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(body),
-        })
-        if (!response.ok) {
-          throw new Error(`Analytics request failed with status ${response.status}`)
-        }
-        if (isAnalyticsLoggingEnabled()) {
-          console.log("[kanna/analytics] Sent analytics event:", eventName, response.status)
-        }
-      })
-      .catch((error) => {
-        if (isAnalyticsLoggingEnabled()) {
-          console.warn("[kanna/analytics] Failed to send analytics event:", eventName, error)
-        }
-      })
   }
 
   trackLaunch(options: LaunchAnalyticsOptions) {
     this.track("app_launch", getLaunchAnalyticsProperties(options))
-  }
-
-  private buildEventProperties(properties?: Record<string, unknown>) {
-    return {
-      current_version: this.currentVersion,
-      environment: this.environment,
-      ...(properties ?? {}),
-    }
   }
 }
 

@@ -1,9 +1,9 @@
-import { randomUUID } from "node:crypto"
 import { watch, type FSWatcher } from "node:fs"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import path from "node:path"
 import { getSettingsFilePath, LOG_PREFIX } from "../shared/branding"
+import { normalizeMachineId } from "../shared/project-location"
 import {
   DEFAULT_CLAUDE_MODEL_OPTIONS,
   DEFAULT_CODEX_MODEL_OPTIONS,
@@ -23,6 +23,7 @@ import {
   type CodexModelOptions,
   type DefaultProviderPreference,
   type EditorPreset,
+  type MachineAliases,
   type ProviderPreference,
   type RemoteHostConfig,
 } from "../shared/types"
@@ -42,6 +43,7 @@ interface AppSettingsFile {
     preset?: unknown
     commandTemplate?: unknown
   }
+  machineAliases?: unknown
   remoteHosts?: unknown
   defaultProvider?: unknown
   providerDefaults?: {
@@ -77,10 +79,6 @@ function formatDisplayPath(filePath: string) {
     return `~${filePath.slice(homePath.length)}`
   }
   return filePath
-}
-
-function createAnalyticsUserId() {
-  return `anon_${randomUUID()}`
 }
 
 function getDefaultEditorCommandTemplate(preset: EditorPreset) {
@@ -221,6 +219,23 @@ function normalizeRemoteHosts(value: unknown, warnings: string[]): RemoteHostCon
   return hosts
 }
 
+function normalizeMachineAliases(value: unknown, warnings: string[]): MachineAliases {
+  if (value === undefined) return {}
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    warnings.push("machineAliases must be an object")
+    return {}
+  }
+
+  const aliases: MachineAliases = {}
+  for (const [rawMachineId, rawLabel] of Object.entries(value as Record<string, unknown>)) {
+    const machineId = normalizeMachineId(rawMachineId)
+    const label = typeof rawLabel === "string" ? rawLabel.trim() : ""
+    if (!label) continue
+    aliases[machineId] = label
+  }
+  return aliases
+}
+
 function normalizeClaudePreference(value?: {
   model?: unknown
   effort?: unknown
@@ -286,6 +301,7 @@ function toFilePayload(state: AppSettingsState) {
     chatSoundId: state.chatSoundId,
     terminal: state.terminal,
     editor: state.editor,
+    machineAliases: state.machineAliases,
     remoteHosts: state.remoteHosts,
     defaultProvider: state.defaultProvider,
     providerDefaults: state.providerDefaults,
@@ -301,6 +317,7 @@ function toSnapshot(state: AppSettingsState): AppSettingsSnapshot {
     chatSoundId: state.chatSoundId,
     terminal: state.terminal,
     editor: state.editor,
+    machineAliases: state.machineAliases,
     remoteHosts: state.remoteHosts,
     defaultProvider: state.defaultProvider,
     providerDefaults: state.providerDefaults,
@@ -322,19 +339,16 @@ function normalizeAppSettings(
     warnings.push("Settings file must contain a JSON object")
   }
 
-  const analyticsEnabled = typeof source?.analyticsEnabled === "boolean" ? source.analyticsEnabled : true
+  const analyticsEnabled = false
   if (source?.analyticsEnabled !== undefined && typeof source.analyticsEnabled !== "boolean") {
     warnings.push("analyticsEnabled must be a boolean")
   }
 
-  const rawAnalyticsUserId = typeof source?.analyticsUserId === "string" ? source.analyticsUserId.trim() : ""
+  const rawAnalyticsUserId = ""
   if (source?.analyticsUserId !== undefined && typeof source.analyticsUserId !== "string") {
     warnings.push("analyticsUserId must be a string")
   }
-  const analyticsUserId = rawAnalyticsUserId || createAnalyticsUserId()
-  if (!rawAnalyticsUserId && source?.analyticsUserId !== undefined) {
-    warnings.push("analyticsUserId must be a non-empty string")
-  }
+  const analyticsUserId = rawAnalyticsUserId
 
   const editorPreset = normalizeEditorPreset(source?.editor?.preset)
   const state: AppSettingsState = {
@@ -352,6 +366,7 @@ function normalizeAppSettings(
       preset: editorPreset,
       commandTemplate: normalizeEditorCommandTemplate(source?.editor?.commandTemplate, editorPreset),
     },
+    machineAliases: normalizeMachineAliases(source?.machineAliases, warnings),
     remoteHosts: normalizeRemoteHosts(source?.remoteHosts, warnings),
     defaultProvider: normalizeDefaultProvider(source?.defaultProvider),
     providerDefaults: normalizeProviderDefaults(source?.providerDefaults),
@@ -381,6 +396,7 @@ function toComparablePayload(source: AppSettingsFile) {
     chatSoundId: source.chatSoundId,
     terminal: source.terminal,
     editor: source.editor,
+    machineAliases: source.machineAliases,
     remoteHosts: source.remoteHosts,
     defaultProvider: source.defaultProvider,
     providerDefaults: source.providerDefaults,
@@ -399,6 +415,7 @@ function applyPatch(state: AppSettingsState, patch: AppSettingsPatch): AppSettin
       ...state.editor,
       ...patch.editor,
     },
+    machineAliases: patch.machineAliases ?? state.machineAliases,
     providerDefaults: {
       claude: {
         ...state.providerDefaults.claude,
