@@ -106,7 +106,7 @@ function EmptyProjectChatButton({
     <button
       type="button"
       disabled={disabled}
-      title={!isConnected ? `Start ${APP_NAME} to connect` : "Create session"}
+      title={!isConnected ? `Start ${APP_NAME} to connect` : "New chat"}
       className={cn(
         "group flex w-full items-center gap-2 pl-2.5 pr-0.5 py-0.5 rounded-lg text-left cursor-pointer border-border/0 hover:border-border hover:bg-muted/20 active:scale-[0.985] border transition-all",
         "border-border/0 dark:hover:border-slate-400/10",
@@ -115,7 +115,7 @@ function EmptyProjectChatButton({
       onClick={() => onNewLocalChat(projectId)}
     >
       <span className="text-sm truncate flex-1 translate-y-[-0.5px] text-slate-500 dark:text-slate-400">
-        Create Session
+        New chat
       </span>
       <div className="h-7 w-6 mr-[2px] shrink-0" aria-hidden />
     </button>
@@ -124,9 +124,7 @@ function EmptyProjectChatButton({
 
 function getProjectDisplayTitle(group: SidebarProjectGroup, title: string) {
   if (group.isGeneralChat) return title
-  const machineLabel = group.machineLabel?.trim()
-  if (!machineLabel) return title
-  return `${machineLabel} / ${title}`
+  return title
 }
 
 export function getProjectGroupReorderPreviewTargetId({
@@ -283,7 +281,7 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
                     (!isConnected || startingLocalPath === localPath) && "opacity-50 cursor-not-allowed"
                   )}
                   disabled={!isConnected || startingLocalPath === localPath}
-                  title={!isConnected ? `Start ${APP_NAME} to connect` : "Create session"}
+                  title={!isConnected ? `Start ${APP_NAME} to connect` : "New chat"}
                   onClick={(event) => {
                     event.stopPropagation()
                     onNewLocalChat(groupKey)
@@ -297,7 +295,7 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right" sideOffset={4}>
-                {!isConnected ? `Start ${APP_NAME} to connect` : "Create session"}
+                {!isConnected ? `Start ${APP_NAME} to connect` : "New chat"}
               </TooltipContent>
             </Tooltip>
           ) : null}

@@ -1387,6 +1387,11 @@ export function createWsRouter({
           resolvedAnalytics.track("project_removed")
           break
         }
+        case "project.listHidden": {
+          const projects = store.listHiddenProjects(normalizeMachineId(command.machineId))
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result: projects })
+          return
+        }
         case "project.rename": {
           await store.renameProject(command.projectId, command.title)
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id })
@@ -1440,6 +1445,20 @@ export function createWsRouter({
           const result = await agent.forkChat(command.chatId)
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result })
           await broadcastFilteredSnapshots({ includeSidebar: true })
+          return
+        }
+        case "chat.linkProject": {
+          if (agent.getActiveStatuses().has(command.chatId) || agent.getDrainingChatIds().has(command.chatId)) {
+            throw new Error("Stop the running turn before linking this chat to a project")
+          }
+          const chat = await store.linkChatToProject(command.chatId, command.projectId)
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result: { chatId: chat.id, projectId: chat.projectId } })
+          await broadcastFilteredSnapshots({
+            includeSidebar: true,
+            includeLocalProjects: true,
+            chatIds: new Set([chat.id]),
+            projectIds: new Set([chat.projectId]),
+          })
           return
         }
         case "chat.rename": {

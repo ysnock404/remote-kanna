@@ -1,16 +1,19 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
-import { Flower, Loader2, PanelLeft, X, Menu, Plus, Settings } from "lucide-react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type ReactNode } from "react"
+import { Eye, Flower, FolderPlus, Loader2, PanelLeft, X, Menu, Plus, RotateCcw, Settings, MessageCircle, Search, Plug, Sparkles, SquarePen } from "lucide-react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { APP_NAME } from "../../shared/branding"
+import { LOCAL_MACHINE_ID } from "../../shared/project-location"
 import { Button } from "../components/ui/button"
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../components/ui/dialog"
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "../components/ui/context-menu"
 import { formatSidebarAgeLabel } from "../lib/formatters"
 import { getSidebarChatTimestamp } from "../lib/sidebarChats"
 import { cn } from "../lib/utils"
 import { ChatRow } from "../components/chat-ui/sidebar/ChatRow"
 import { LocalProjectsSection } from "../components/chat-ui/sidebar/LocalProjectsSection"
+import { MachineSelector } from "../components/MachineSelector"
 import { getResolvedKeybindings } from "../lib/keybindings"
-import type { KeybindingsSnapshot, MachineId, SidebarData, SidebarChatRow, UpdateSnapshot } from "../../shared/types"
+import type { HiddenProjectSummary, KeybindingsSnapshot, LocalProjectsSnapshot, MachineId, MachineSummary, SidebarData, SidebarChatRow, SidebarProjectGroup, UpdateSnapshot } from "../../shared/types"
 import type { SocketStatus } from "./socket"
 import {
   getSidebarJumpTargetIndex,
@@ -53,7 +56,12 @@ interface KannaSidebarProps {
   onClose: () => void
   onCollapse: () => void
   onExpand: () => void
+  localProjects: LocalProjectsSnapshot | null
+  selectedMachineId: MachineId
+  onSelectMachine: (machineId: MachineId) => void
+  onRenameMachine: (machineId: MachineId, label: string) => Promise<void>
   onCreateChat: (projectId: string) => void
+  onCreateGeneralChat: () => void
   onForkChat: (chat: SidebarChatRow) => void
   currentProjectId: string | null
   keybindings: KeybindingsSnapshot | null
@@ -67,10 +75,122 @@ interface KannaSidebarProps {
   onCopyPath: (localPath: string) => void
   onOpenExternalPath: (action: "open_finder" | "open_editor", localPath: string, machineId?: MachineId) => void
   onHideProject: (projectId: string) => void
+  onListHiddenProjects: (machineId: MachineId) => Promise<HiddenProjectSummary[]>
+  onRestoreHiddenProject: (project: HiddenProjectSummary) => Promise<void>
   onReorderProjectGroups: (projectIds: string[]) => void
   editorLabel: string
   updateSnapshot: UpdateSnapshot | null
   onOpenChangelog: () => void
+}
+
+function getSidebarMachines(localProjects: LocalProjectsSnapshot | null): MachineSummary[] {
+  if (localProjects?.machines?.length) return localProjects.machines
+  if (!localProjects) return []
+  return [{
+    id: LOCAL_MACHINE_ID,
+    displayName: localProjects.machine.displayName,
+    platform: localProjects.machine.platform,
+    enabled: true,
+  }]
+}
+
+function getMachineProjectCounts(projectGroups: SidebarProjectGroup[]) {
+  const counts = new Map<MachineId, number>()
+  for (const group of projectGroups) {
+    if (group.isGeneralChat) continue
+    const machineId = group.machineId ?? LOCAL_MACHINE_ID
+    counts.set(machineId, (counts.get(machineId) ?? 0) + 1)
+  }
+  return counts
+}
+
+function SidebarPanelLabel({ children }: { children: ReactNode }) {
+  return (
+    <div className="px-2 pt-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+      {children}
+    </div>
+  )
+}
+
+function ProjectsPanelMenu({
+  canCreateChat,
+  onCreateChat,
+  onAddProject,
+  onShowHiddenProjects,
+  children,
+}: {
+  canCreateChat: boolean
+  onCreateChat: () => void
+  onAddProject: () => void
+  onShowHiddenProjects: () => void
+  children: ReactNode
+}) {
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        {children}
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem
+          disabled={!canCreateChat}
+          onSelect={(event) => {
+            event.stopPropagation()
+            if (!canCreateChat) return
+            onCreateChat()
+          }}
+        >
+          <SquarePen className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">New chat</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.stopPropagation()
+            onAddProject()
+          }}
+        >
+          <FolderPlus className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">Open project</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.stopPropagation()
+            onShowHiddenProjects()
+          }}
+        >
+          <Eye className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">Hidden projects</span>
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  )
+}
+
+function SidebarActionRow({
+  icon: Icon,
+  label,
+  onClick,
+  disabled,
+}: {
+  icon: ComponentType<{ className?: string }>
+  label: string
+  onClick?: () => void
+  disabled?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        "flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm text-foreground transition-colors",
+        "hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        disabled && "cursor-not-allowed opacity-45 hover:bg-transparent"
+      )}
+    >
+      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 truncate">{label}</span>
+    </button>
+  )
 }
 
 function KannaSidebarImpl({
@@ -85,7 +205,12 @@ function KannaSidebarImpl({
   onClose,
   onCollapse,
   onExpand,
+  localProjects,
+  selectedMachineId,
+  onSelectMachine,
+  onRenameMachine,
   onCreateChat,
+  onCreateGeneralChat,
   onForkChat,
   currentProjectId,
   keybindings,
@@ -99,6 +224,8 @@ function KannaSidebarImpl({
   onCopyPath,
   onOpenExternalPath,
   onHideProject,
+  onListHiddenProjects,
+  onRestoreHiddenProject,
   onReorderProjectGroups,
   editorLabel,
   updateSnapshot,
@@ -116,6 +243,11 @@ function KannaSidebarImpl({
   const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth)
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   const [archivedProjectId, setArchivedProjectId] = useState<string | null>(null)
+  const [hiddenProjectsDialogOpen, setHiddenProjectsDialogOpen] = useState(false)
+  const [hiddenProjects, setHiddenProjects] = useState<HiddenProjectSummary[]>([])
+  const [hiddenProjectsLoading, setHiddenProjectsLoading] = useState(false)
+  const [hiddenProjectsError, setHiddenProjectsError] = useState<string | null>(null)
+  const [restoringHiddenProjectId, setRestoringHiddenProjectId] = useState<string | null>(null)
   const resolvedKeybindings = useMemo(() => getResolvedKeybindings(keybindings), [keybindings])
   const visibleChats = useMemo(
     () => getVisibleSidebarChats(data.projectGroups, collapsedSections, expandedGroups),
@@ -125,6 +257,30 @@ function KannaSidebarImpl({
   const visibleIndexByChatId = useMemo(
     () => new Map(visibleChats.map((entry) => [entry.chat.chatId, entry.visibleIndex])),
     [visibleChats]
+  )
+  const machines = useMemo(() => getSidebarMachines(localProjects), [localProjects])
+  const activeMachine = machines.find((machine) => machine.id === selectedMachineId) ?? machines[0] ?? null
+  const activeMachineId = activeMachine?.id ?? selectedMachineId
+  const machineProjectCounts = useMemo(() => getMachineProjectCounts(data.projectGroups), [data.projectGroups])
+  const generalProjectGroups = useMemo(
+    () => data.projectGroups.filter((group) => group.isGeneralChat),
+    [data.projectGroups]
+  )
+  const activeMachineProjectGroups = useMemo(
+    () => data.projectGroups.filter((group) => (
+      !group.isGeneralChat && (group.machineId ?? LOCAL_MACHINE_ID) === activeMachineId
+    )),
+    [activeMachineId, data.projectGroups]
+  )
+  const currentProjectGroup = useMemo(
+    () => data.projectGroups.find((group) => group.groupKey === currentProjectId) ?? null,
+    [currentProjectId, data.projectGroups]
+  )
+  const canCreateChatInCurrentProject = Boolean(
+    currentProjectId
+    && currentProjectGroup
+    && !currentProjectGroup.isGeneralChat
+    && (currentProjectGroup.machineId ?? LOCAL_MACHINE_ID) === activeMachineId
   )
 
   const activeVisibleCount = visibleChats.length
@@ -190,6 +346,57 @@ function KannaSidebarImpl({
     })
   }, [])
 
+  const handleReorderActiveMachineProjectGroups = useCallback((newOrder: string[]) => {
+    const reordered = [...newOrder]
+    const activeSet = new Set(activeMachineProjectGroups.map((group) => group.groupKey))
+    const mergedOrder = data.projectGroups.map((group) => (
+      activeSet.has(group.groupKey) ? reordered.shift() ?? group.groupKey : group.groupKey
+    ))
+    onReorderProjectGroups(mergedOrder)
+  }, [activeMachineProjectGroups, data.projectGroups, onReorderProjectGroups])
+
+  const openAddProject = useCallback(() => {
+    navigate("/")
+    onClose()
+    onOpenAddProjectModal()
+  }, [navigate, onClose, onOpenAddProjectModal])
+
+  const loadHiddenProjects = useCallback(async () => {
+    setHiddenProjectsLoading(true)
+    setHiddenProjectsError(null)
+    try {
+      setHiddenProjects(await onListHiddenProjects(activeMachineId))
+    } catch (error) {
+      setHiddenProjectsError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setHiddenProjectsLoading(false)
+    }
+  }, [activeMachineId, onListHiddenProjects])
+
+  const handleRestoreHiddenProject = useCallback(async (project: HiddenProjectSummary) => {
+    setRestoringHiddenProjectId(project.id)
+    setHiddenProjectsError(null)
+    try {
+      await onRestoreHiddenProject(project)
+      setHiddenProjects((current) => current.filter((entry) => entry.id !== project.id))
+    } catch (error) {
+      setHiddenProjectsError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setRestoringHiddenProjectId(null)
+    }
+  }, [onRestoreHiddenProject])
+
+  useEffect(() => {
+    if (!hiddenProjectsDialogOpen) return
+    void loadHiddenProjects()
+  }, [hiddenProjectsDialogOpen, loadHiddenProjects])
+
+  const handleCreateChatInCurrentProject = useCallback(() => {
+    if (!currentProjectId || !canCreateChatInCurrentProject) return
+    onCreateChat(currentProjectId)
+    onClose()
+  }, [canCreateChatInCurrentProject, currentProjectId, onClose, onCreateChat])
+
   const renderChatRow = useCallback((chat: SidebarChatRow) => {
     const visibleIndex = visibleIndexByChatId.get(chat.chatId)
 
@@ -228,20 +435,18 @@ function KannaSidebarImpl({
       setShowNumberJumpHints(shouldShowSidebarNumberJumpHints(resolvedKeybindings, event))
 
       if (isSidebarModifierShortcut(resolvedKeybindings, "createChatInCurrentProject", event)) {
-        if (!currentProjectId) {
+        if (!canCreateChatInCurrentProject) {
           return
         }
 
         event.preventDefault()
-        onCreateChat(currentProjectId)
+        handleCreateChatInCurrentProject()
         return
       }
 
       if (isSidebarModifierShortcut(resolvedKeybindings, "openAddProject", event)) {
         event.preventDefault()
-        navigate("/")
-        onClose()
-        onOpenAddProjectModal()
+        openAddProject()
         return
       }
 
@@ -277,7 +482,7 @@ function KannaSidebarImpl({
       window.removeEventListener("keyup", handleKeyUp)
       window.removeEventListener("blur", clearHints)
     }
-  }, [currentProjectId, navigate, onClose, onCreateChat, onOpenAddProjectModal, resolvedKeybindings])
+  }, [canCreateChatInCurrentProject, handleCreateChatInCurrentProject, navigate, onClose, openAddProject, resolvedKeybindings])
 
   useEffect(() => {
     if (!activeChatId || !scrollContainerRef.current) return
@@ -337,6 +542,7 @@ function KannaSidebarImpl({
   }, [isResizingSidebar])
 
   const hasVisibleChats = activeVisibleCount > 0
+  const hasVisibleSidebarContent = generalProjectGroups.length > 0 || activeMachineProjectGroups.length > 0
   const isLocalProjectsActive = location.pathname === "/"
   const isSettingsActive = location.pathname.startsWith("/settings")
   const isUtilityPageActive = isLocalProjectsActive || isSettingsActive
@@ -427,10 +633,7 @@ function KannaSidebarImpl({
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => {
-                navigate("/")
-                onClose()
-              }}
+              onClick={openAddProject}
               className="size-10 rounded-lg hover:!border-border/0 md:hidden"
               title="New project"
             >
@@ -459,10 +662,7 @@ function KannaSidebarImpl({
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => {
-                navigate("/")
-                onClose()
-              }}
+              onClick={openAddProject}
               className="hidden md:inline-flex size-10 rounded-lg hover:!border-border/0"
               title="New project"
             >
@@ -503,14 +703,92 @@ function KannaSidebarImpl({
               </div>
             ) : null}
 
-            {!hasVisibleChats && !isConnecting && data.projectGroups.length === 0 ? (
+            {!hasVisibleChats && !isConnecting && !hasVisibleSidebarContent ? (
               <p className="text-sm text-slate-400 p-2 mt-6 text-center">No conversations yet</p>
             ) : null}
 
+            <div className="space-y-1 pb-2">
+              <SidebarActionRow
+                icon={MessageCircle}
+                label="General Chat"
+                onClick={() => {
+                  onCreateGeneralChat()
+                  onClose()
+                }}
+              />
+              {generalProjectGroups.map((group) => {
+                const hasMore = group.olderChats.length > 0
+                const isExpanded = expandedGroups.has(group.groupKey)
+                return (
+                  <div key={group.groupKey} className="space-y-[2px] pl-3">
+                    {group.previewChats.map(renderChatRow)}
+                    {hasMore && isExpanded ? (
+                      <button
+                        type="button"
+                        onClick={() => toggleExpandedGroup(group.groupKey)}
+                        className="flex w-full justify-center py-1 text-xs text-muted-foreground/60 transition-colors hover:text-foreground/60"
+                      >
+                        Hide older
+                      </button>
+                    ) : null}
+                    {isExpanded ? group.olderChats.map(renderChatRow) : null}
+                    {hasMore && !isExpanded ? (
+                      <button
+                        type="button"
+                        onClick={() => toggleExpandedGroup(group.groupKey)}
+                        className="flex w-full justify-center py-1 text-xs text-muted-foreground/60 transition-colors hover:text-foreground/60"
+                      >
+                        Show older
+                      </button>
+                    ) : null}
+                  </div>
+                )
+              })}
+            </div>
+
+            {machines.length > 0 ? (
+              <div className="border-y border-border/60 py-2">
+                <MachineSelector
+                  machines={machines}
+                  selectedMachineId={activeMachineId}
+                  projectCounts={machineProjectCounts}
+                  onSelectMachine={onSelectMachine}
+                  onRenameMachine={onRenameMachine}
+                  compact
+                  className="px-0"
+                  buttonClassName="h-8 w-full justify-start px-2 text-sm"
+                />
+              </div>
+            ) : null}
+
+            <div className="space-y-1 py-2">
+              <SidebarActionRow
+                icon={SquarePen}
+                label="New chat"
+                disabled={!canCreateChatInCurrentProject}
+                onClick={handleCreateChatInCurrentProject}
+              />
+              <SidebarActionRow icon={Search} label="Search" disabled />
+              <SidebarActionRow icon={Plug} label="Plugins" disabled />
+              <SidebarActionRow icon={Sparkles} label="Skills" disabled />
+            </div>
+
+            <ProjectsPanelMenu
+              canCreateChat={canCreateChatInCurrentProject}
+              onCreateChat={handleCreateChatInCurrentProject}
+              onAddProject={openAddProject}
+              onShowHiddenProjects={() => {
+                setHiddenProjectsDialogOpen(true)
+              }}
+            >
+              <div>
+                <SidebarPanelLabel>Projects</SidebarPanelLabel>
+              </div>
+            </ProjectsPanelMenu>
             <LocalProjectsSection
-              projectGroups={data.projectGroups}
+              projectGroups={activeMachineProjectGroups}
               editorLabel={editorLabel}
-              onReorderGroups={onReorderProjectGroups}
+              onReorderGroups={handleReorderActiveMachineProjectGroups}
               collapsedSections={collapsedSections}
               expandedGroups={expandedGroups}
               onToggleSection={toggleSection}
@@ -524,6 +802,11 @@ function KannaSidebarImpl({
               onHideProject={onHideProject}
               isConnected={connectionStatus === "connected"}
             />
+            {!isConnecting && activeMachineProjectGroups.length === 0 ? (
+              <p className="px-2 py-3 text-xs text-muted-foreground">
+                No projects on {activeMachine?.displayName ?? "this device"}.
+              </p>
+            ) : null}
           </div>
         </div>
 
@@ -630,6 +913,76 @@ function KannaSidebarImpl({
               ))
             ) : (
               <p className="px-1 py-3 text-sm text-muted-foreground">No archived chats</p>
+            )}
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={hiddenProjectsDialogOpen}
+        onOpenChange={(dialogOpen) => {
+          setHiddenProjectsDialogOpen(dialogOpen)
+          if (!dialogOpen) {
+            setHiddenProjectsError(null)
+            setRestoringHiddenProjectId(null)
+          }
+        }}
+      >
+        <DialogContent size="md">
+          <DialogHeader>
+            <DialogTitle>Hidden Projects</DialogTitle>
+            <DialogDescription>
+              {activeMachine?.displayName ?? "Current device"}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-2">
+            {hiddenProjectsError ? (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {hiddenProjectsError}
+              </div>
+            ) : null}
+            {hiddenProjectsLoading ? (
+              <div className="flex items-center gap-2 px-1 py-4 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading hidden projects
+              </div>
+            ) : hiddenProjects.length > 0 ? (
+              <div className="max-h-[55vh] space-y-1 overflow-y-auto">
+                {hiddenProjects.map((project) => {
+                  const hiddenAge = formatSidebarAgeLabel(project.hiddenAt, nowMs)
+                  const isRestoring = restoringHiddenProjectId === project.id
+                  return (
+                    <div
+                      key={project.id}
+                      className="flex items-center justify-between gap-3 rounded-lg border border-border/0 px-3 py-2 transition-colors hover:border-border hover:bg-muted"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium">{project.title}</div>
+                        <div className="truncate text-xs text-muted-foreground">{project.localPath}</div>
+                        {hiddenAge ? (
+                          <div className="text-[11px] text-muted-foreground/70">
+                            {hiddenAge === "now" ? "Hidden just now" : `Hidden ${hiddenAge} ago`}
+                          </div>
+                        ) : null}
+                      </div>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={Boolean(restoringHiddenProjectId)}
+                        onClick={() => void handleRestoreHiddenProject(project)}
+                        className="shrink-0 gap-1.5"
+                      >
+                        {isRestoring ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                        Restore
+                      </Button>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <p className="px-1 py-3 text-sm text-muted-foreground">
+                No hidden projects on {activeMachine?.displayName ?? "this device"}.
+              </p>
             )}
           </DialogBody>
         </DialogContent>

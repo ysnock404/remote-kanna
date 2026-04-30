@@ -83,6 +83,13 @@ export type ChatEvent =
     }
   | {
       v: 2
+      type: "chat_project_linked"
+      timestamp: number
+      chatId: string
+      projectId: string
+    }
+  | {
+      v: 2
       type: "chat_deleted"
       timestamp: number
       chatId: string

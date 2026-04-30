@@ -5,11 +5,14 @@ import { useOutletContext } from "react-router-dom"
 import type { ChatInputHandle } from "../../components/chat-ui/ChatInput"
 import { ChatNavbar } from "../../components/chat-ui/ChatNavbar"
 import { RightSidebar } from "../../components/chat-ui/RightSidebar"
+import { Button } from "../../components/ui/button"
 import { Card, CardContent } from "../../components/ui/card"
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../../components/ui/dialog"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "../../components/ui/resizable"
 import { actionMatchesEvent, getResolvedKeybindings } from "../../lib/keybindings"
 import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow"
 import { cn } from "../../lib/utils"
+import { getPathBasename } from "../../lib/formatters"
 import {
   DEFAULT_RIGHT_SIDEBAR_SIZE,
   DEFAULT_RIGHT_SIDEBAR_VISIBILITY_STATE,
@@ -444,10 +447,17 @@ export function ChatPage() {
   const chatInputRef = useRef<ChatInputHandle | null>(null)
   const { inputRef, syncInputHeight, transcriptPaddingBottom } = useTranscriptPaddingBottom()
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
+  const [linkProjectDialogOpen, setLinkProjectDialogOpen] = useState(false)
+  const [linkProjectError, setLinkProjectError] = useState<string | null>(null)
+  const [linkingProjectId, setLinkingProjectId] = useState<string | null>(null)
   const showEmptyState = state.messages.length === 0 && state.runtime?.title === "New Chat"
   const isGeneralChat = Boolean(state.runtime?.isGeneralChat)
   const projectId = isGeneralChat ? null : state.activeProjectId
   const uploadProjectId = state.runtime?.projectId ?? state.activeProjectId
+  const linkableProjectGroups = useMemo(
+    () => state.sidebarData.projectGroups.filter((group) => !group.isGeneralChat),
+    [state.sidebarData.projectGroups]
+  )
   const projectTerminalLayout = useTerminalLayoutStore((store) => (projectId ? store.projects[projectId] : undefined))
   const terminalLayout = projectTerminalLayout ?? DEFAULT_PROJECT_TERMINAL_LAYOUT
   const projectRightSidebarVisibility = useRightSidebarStore((store) => (projectId ? store.projects[projectId] : undefined))
@@ -653,6 +663,24 @@ export function ChatPage() {
   const handleCopyProjectFilePath = useCallback((absolutePath: string) => {
     void state.handleCopyPath(absolutePath)
   }, [state.handleCopyPath])
+
+  const handleLinkProject = useCallback(async (targetProjectId: string) => {
+    if (!state.activeChatId) return
+    setLinkingProjectId(targetProjectId)
+    setLinkProjectError(null)
+    try {
+      await state.socket.command({
+        type: "chat.linkProject",
+        chatId: state.activeChatId,
+        projectId: targetProjectId,
+      })
+      setLinkProjectDialogOpen(false)
+    } catch (error) {
+      setLinkProjectError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setLinkingProjectId(null)
+    }
+  }, [state.activeChatId, state.socket])
 
   const handleRemoveTerminal = useCallback((currentProjectId: string, terminalId: string) => {
     void state.socket.command({ type: "terminal.close", terminalId }).catch(() => {})
@@ -871,6 +899,10 @@ export function ChatPage() {
           onToggleEmbeddedTerminal={projectId ? handleToggleEmbeddedTerminal : undefined}
           rightSidebarVisible={showRightSidebar}
           onToggleRightSidebar={projectId ? handleToggleRightSidebar : undefined}
+          onLinkProject={isGeneralChat && state.activeChatId ? () => {
+            setLinkProjectError(null)
+            setLinkProjectDialogOpen(true)
+          } : undefined}
           onOpenExternal={isGeneralChat ? undefined : handleOpenExternal}
           onExportTranscript={state.activeChatId ? () => void state.handleShareChat(state.activeChatId) : undefined}
           canExportTranscript={Boolean(state.activeChatId) && !state.isExportingStandalone}
@@ -1042,6 +1074,66 @@ export function ChatPage() {
 
   return (
     <div ref={layoutRootRef} className="flex-1 flex flex-col min-w-0 relative">
+      <Dialog
+        open={linkProjectDialogOpen}
+        onOpenChange={(open) => {
+          setLinkProjectDialogOpen(open)
+          if (!open) {
+            setLinkProjectError(null)
+            setLinkingProjectId(null)
+          }
+        }}
+      >
+        <DialogContent size="md">
+          <DialogHeader>
+            <DialogTitle>Link to project</DialogTitle>
+            <DialogDescription>
+              Move this General Chat conversation into an existing project workspace.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-2">
+            {linkProjectError ? (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {linkProjectError}
+              </div>
+            ) : null}
+            {linkableProjectGroups.length > 0 ? (
+              <div className="max-h-[55vh] space-y-1 overflow-y-auto">
+                {linkableProjectGroups.map((group) => {
+                  const title = group.title?.trim() || getPathBasename(group.localPath)
+                  const isLinking = linkingProjectId === group.groupKey
+                  return (
+                    <button
+                      key={group.groupKey}
+                      type="button"
+                      disabled={Boolean(linkingProjectId)}
+                      className="flex w-full items-center justify-between gap-3 rounded-lg border border-border/0 px-3 py-2 text-left transition-colors hover:border-border hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => void handleLinkProject(group.groupKey)}
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium">{title}</span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {group.machineLabel ? `${group.machineLabel} - ` : ""}{group.localPath}
+                        </span>
+                      </span>
+                      {isLinking ? <span className="shrink-0 text-xs text-muted-foreground">Linking...</span> : null}
+                    </button>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-border bg-muted/30 px-3 py-4 text-sm text-muted-foreground">
+                No projects available yet.
+              </div>
+            )}
+            <div className="flex justify-end pt-2">
+              <Button variant="secondary" size="sm" onClick={() => setLinkProjectDialogOpen(false)}>
+                Cancel
+              </Button>
+            </div>
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
       {shouldRenderDesktopRightSidebarLayout && projectId ? (
         <ResizablePanelGroup
           key={`${projectId}-right-sidebar`}

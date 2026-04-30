@@ -17,7 +17,7 @@ import { ChatPage } from "./ChatPage"
 import { LocalProjectsPage } from "./LocalProjectsPage"
 import { SettingsPage } from "./SettingsPage"
 import { useKannaState } from "./useKannaState"
-import type { AppSettingsSnapshot, MachineId } from "../../shared/types"
+import type { AppSettingsSnapshot, HiddenProjectSummary, MachineId } from "../../shared/types"
 
 const VERSION_SEEN_STORAGE_KEY = "kanna:last-seen-version"
 const AUTH_STATUS_RETRY_DELAY_MS = 500
@@ -322,6 +322,12 @@ function KannaLayout() {
   const handleSidebarHideProject = useCallback((projectId: string) => {
     void state.handleHideProject(projectId)
   }, [state.handleHideProject])
+  const handleSidebarListHiddenProjects = useCallback(async (machineId: MachineId) => {
+    return await state.socket.command<HiddenProjectSummary[]>({ type: "project.listHidden", machineId })
+  }, [state.socket])
+  const handleSidebarRestoreHiddenProject = useCallback(async (project: HiddenProjectSummary) => {
+    await state.socket.command({ type: "project.open", localPath: project.localPath, machineId: project.machineId })
+  }, [state.socket])
   const handleSidebarReorderProjectGroups = useCallback((projectIds: string[]) => {
     void state.handleReorderProjectGroups(projectIds)
   }, [state.handleReorderProjectGroups])
@@ -341,7 +347,21 @@ function KannaLayout() {
       onClose={state.closeSidebar}
       onCollapse={state.collapseSidebar}
       onExpand={state.expandSidebar}
+      localProjects={state.localProjects}
+      selectedMachineId={state.selectedMachineId}
+      onSelectMachine={state.setSelectedMachineId}
+      onRenameMachine={async (machineId: MachineId, label: string) => {
+        await state.handleWriteAppSettings({
+          machineAliases: {
+            ...(state.appSettings?.machineAliases ?? {}),
+            [machineId]: label,
+          },
+        })
+      }}
       onCreateChat={handleSidebarCreateChat}
+      onCreateGeneralChat={() => {
+        void state.handleCreateGeneralChat()
+      }}
       onForkChat={handleSidebarForkChat}
       currentProjectId={state.activeProjectId}
       keybindings={state.keybindings}
@@ -355,6 +375,8 @@ function KannaLayout() {
       onCopyPath={handleSidebarCopyPath}
       onOpenExternalPath={handleSidebarOpenExternalPath}
       onHideProject={handleSidebarHideProject}
+      onListHiddenProjects={handleSidebarListHiddenProjects}
+      onRestoreHiddenProject={handleSidebarRestoreHiddenProject}
       onReorderProjectGroups={handleSidebarReorderProjectGroups}
       editorLabel={state.editorLabel}
       updateSnapshot={state.updateSnapshot}
@@ -374,11 +396,19 @@ function KannaLayout() {
     handleSidebarRenameChat,
     handleSidebarShareChat,
     handleSidebarReorderProjectGroups,
+    handleSidebarListHiddenProjects,
+    handleSidebarRestoreHiddenProject,
     handleSidebarHideProject,
     showMobileOpenButton,
     state.activeChatId,
     state.activeProjectId,
     state.keybindings,
+    state.localProjects,
+    state.selectedMachineId,
+    state.setSelectedMachineId,
+    state.handleCreateGeneralChat,
+    state.handleWriteAppSettings,
+    state.appSettings?.machineAliases,
     state.closeSidebar,
     state.collapseSidebar,
     state.connectionStatus,

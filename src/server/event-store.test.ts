@@ -555,6 +555,69 @@ describe("EventStore", () => {
     expect(store.listChatsByProject(reopened.id).map((entry) => entry.id)).toEqual([chat.id])
   })
 
+  test("lists hidden projects and keeps them through compaction", async () => {
+    const dataDir = await createTempDataDir()
+    const store = new EventStore(dataDir)
+    await store.initialize()
+
+    const project = await store.openProject("/tmp/hidden-project", "Hidden Project")
+
+    await store.removeProject(project.id)
+
+    expect(store.listHiddenProjects().map((entry) => ({
+      id: entry.id,
+      localPath: entry.localPath,
+      title: entry.title,
+    }))).toEqual([{
+      id: project.id,
+      localPath: "/tmp/hidden-project",
+      title: "Hidden Project",
+    }])
+
+    await store.compact()
+
+    const reloaded = new EventStore(dataDir)
+    await reloaded.initialize()
+
+    expect(reloaded.listHiddenProjects().map((entry) => entry.id)).toEqual([project.id])
+  })
+
+  test("links a General Chat conversation to an existing project", async () => {
+    const dataDir = await createTempDataDir()
+    const store = new EventStore(dataDir)
+    await store.initialize()
+
+    const generalProject = await store.ensureGeneralChatProject()
+    const targetProject = await store.openProject("/tmp/project")
+    const chat = await store.createChat(generalProject.id)
+    await store.setSessionToken(chat.id, "session-1")
+    await store.setPendingForkSessionToken(chat.id, "fork-session-1")
+
+    const linked = await store.linkChatToProject(chat.id, targetProject.id)
+
+    expect(linked.projectId).toBe(targetProject.id)
+    expect(linked.sessionToken).toBeNull()
+    expect(linked.pendingForkSessionToken).toBeNull()
+
+    const reloaded = new EventStore(dataDir)
+    await reloaded.initialize()
+
+    expect(reloaded.requireChat(chat.id).projectId).toBe(targetProject.id)
+    expect(reloaded.requireChat(chat.id).sessionToken).toBeNull()
+  })
+
+  test("does not link regular project chats to another project", async () => {
+    const dataDir = await createTempDataDir()
+    const store = new EventStore(dataDir)
+    await store.initialize()
+
+    const sourceProject = await store.openProject("/tmp/source")
+    const targetProject = await store.openProject("/tmp/target")
+    const chat = await store.createChat(sourceProject.id)
+
+    await expect(store.linkChatToProject(chat.id, targetProject.id)).rejects.toThrow("Only General Chat")
+  })
+
   test("archives chats without deleting their transcript", async () => {
     const dataDir = await createTempDataDir()
     const store = new EventStore(dataDir)

@@ -117,7 +117,7 @@ describe("LocalProjectsSection", () => {
     expect(html).not.toContain("chat-7")
   })
 
-  test("shows a faux create session row when an empty project is expanded", () => {
+  test("shows a new chat row when an empty project is expanded", () => {
     const projectGroups: SidebarProjectGroup[] = [{
       groupKey: "project-a",
       localPath: "/tmp/project-a",
@@ -131,11 +131,11 @@ describe("LocalProjectsSection", () => {
       onNewLocalChat: () => undefined,
     })
 
-    expect(html).toContain("Create Session")
+    expect(html).toContain("New chat")
     expect(html).not.toContain("Show older")
   })
 
-  test("prefixes the project title with the machine label", () => {
+  test("shows the project title without the machine label", () => {
     const projectGroups: SidebarProjectGroup[] = [{
       groupKey: "project-a",
       machineLabel: "Desktop-Pc",
@@ -149,7 +149,8 @@ describe("LocalProjectsSection", () => {
 
     const html = renderSection(projectGroups)
 
-    expect(html).toContain("Desktop-Pc / New Project")
+    expect(html).toContain("New Project")
+    expect(html).not.toContain("Desktop-Pc / New Project")
   })
 
   test("hides the faux create session row when the empty project is collapsed", () => {
@@ -167,7 +168,7 @@ describe("LocalProjectsSection", () => {
       onNewLocalChat: () => undefined,
     })
 
-    expect(html).not.toContain("Create Session")
+    expect(html).not.toContain(">New chat</span>")
   })
 
   test("starts the downward reorder preview when dragged top plus 20px crosses the target center", () => {

@@ -110,6 +110,8 @@ function getReplayEventPriority(event: StoreEvent) {
       return 6
     case "pending_fork_session_token_set":
       return 6
+    case "chat_project_linked":
+      return 7
     case "turn_cancelled":
       return 7
     case "turn_finished":
@@ -495,6 +497,15 @@ export class EventStore {
         chat.updatedAt = event.timestamp
         break
       }
+      case "chat_project_linked": {
+        const chat = this.state.chatsById.get(event.chatId)
+        if (!chat) break
+        chat.projectId = event.projectId
+        chat.sessionToken = null
+        chat.pendingForkSessionToken = null
+        chat.updatedAt = event.timestamp
+        break
+      }
       case "chat_deleted": {
         const chat = this.state.chatsById.get(event.chatId)
         if (!chat) break
@@ -833,6 +844,38 @@ export class EventStore {
       await this.writeChain
     }
 
+    return this.state.chatsById.get(chatId)!
+  }
+
+  async linkChatToProject(chatId: string, projectId: string) {
+    const chat = this.requireChat(chatId)
+    const sourceProject = this.state.projectsById.get(chat.projectId)
+    if (!sourceProject || sourceProject.deletedAt) {
+      throw new Error("Current chat project not found")
+    }
+    if (!sourceProject.isGeneralChat) {
+      throw new Error("Only General Chat conversations can be linked to a project")
+    }
+
+    const targetProject = this.state.projectsById.get(projectId)
+    if (!targetProject || targetProject.deletedAt) {
+      throw new Error("Project not found")
+    }
+    if (targetProject.isGeneralChat) {
+      throw new Error("Select a project workspace")
+    }
+    if (chat.projectId === projectId) {
+      return chat
+    }
+
+    const event: ChatEvent = {
+      v: STORE_VERSION,
+      type: "chat_project_linked",
+      timestamp: Date.now(),
+      chatId,
+      projectId,
+    }
+    await this.append(this.chatsLogPath, event)
     return this.state.chatsById.get(chatId)!
   }
 
@@ -1218,6 +1261,27 @@ export class EventStore {
     return [...this.state.projectsById.values()].filter((project) => !project.deletedAt)
   }
 
+  listHiddenProjects(machineId?: MachineId) {
+    const normalizedMachineId = machineId === undefined ? null : normalizeMachineId(machineId)
+    return [...this.state.projectsById.values()]
+      .filter((project) => (
+        Boolean(project.deletedAt)
+        && !project.isGeneralChat
+        && (normalizedMachineId === null || normalizeMachineId(project.machineId) === normalizedMachineId)
+      ))
+      .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
+      .map((project) => ({
+        id: project.id,
+        machineId: normalizeMachineId(project.machineId),
+        localPath: project.localPath,
+        title: project.title,
+        isGeneralChat: project.isGeneralChat,
+        createdAt: project.createdAt,
+        updatedAt: project.updatedAt,
+        hiddenAt: project.deletedAt ?? project.updatedAt,
+      }))
+  }
+
   listChatsByProject(projectId: string) {
     return [...this.state.chatsById.values()]
       .filter((chat) => chat.projectId === projectId && !chat.deletedAt && !chat.archivedAt)
@@ -1259,7 +1323,7 @@ export class EventStore {
     return {
       v: STORE_VERSION,
       generatedAt: Date.now(),
-      projects: this.listProjects().map((project) => ({ ...project })),
+      projects: [...this.state.projectsById.values()].map((project) => ({ ...project })),
       chats: [...this.state.chatsById.values()]
         .filter((chat) => !chat.deletedAt)
         .map((chat) => ({ ...chat })),

@@ -1,5 +1,5 @@
 import { type MouseEvent as ReactMouseEvent } from "react"
-import { Check, Flower, GitBranch, Loader2, Menu, MoreHorizontal, PanelLeft, PanelRight, SquarePen, Terminal, UserRoundPlus } from "lucide-react"
+import { Check, Flower, FolderInput, GitBranch, Loader2, Menu, MoreHorizontal, PanelLeft, PanelRight, SquarePen, Terminal, UserRoundPlus } from "lucide-react"
 import type { EditorOpenSettings, EditorPreset, OpenExternalAction } from "../../../shared/protocol"
 import { Button } from "../ui/button"
 import { CardHeader } from "../ui/card"
@@ -100,6 +100,7 @@ interface Props {
   onToggleEmbeddedTerminal?: () => void
   rightSidebarVisible?: boolean
   onToggleRightSidebar?: () => void
+  onLinkProject?: () => void
   onOpenExternal?: (action: OpenExternalAction, editor?: EditorOpenSettings) => void
   onExportTranscript?: () => void
   canExportTranscript?: boolean
@@ -127,6 +128,7 @@ export function ChatNavbar({
   onToggleEmbeddedTerminal,
   rightSidebarVisible = false,
   onToggleRightSidebar,
+  onLinkProject,
   onOpenExternal,
   onExportTranscript,
   canExportTranscript = false,
@@ -149,6 +151,7 @@ export function ChatNavbar({
       ? null
       : (branchName ?? "Detached HEAD")
   const isMac = platform === "darwin"
+  const hasProjectActions = Boolean(localPath && (onOpenExternal || onToggleEmbeddedTerminal || onToggleRightSidebar || onExportTranscript))
 
   return (
     <CardHeader
@@ -196,9 +199,23 @@ export function ChatNavbar({
 
         <div className="flex-1 min-w-0" />
 
-        {localPath && (onOpenExternal || onToggleEmbeddedTerminal || onToggleRightSidebar || onExportTranscript) ? (
+        {onLinkProject || hasProjectActions ? (
           <div className="flex items-center gap-2 flex-shrink-0">
-            {onOpenExternal ? (
+            {onLinkProject ? (
+              <div className="flex items-center border border-border rounded-2xl px-1 py-0.5 backdrop-blur-lg">
+                <Button
+                  variant="ghost"
+                  size="none"
+                  onClick={onLinkProject}
+                  title="Link to project"
+                  aria-label="Link to project"
+                  className="border border-border/0 hover:!border-border/0 px-2 h-9 hover:!bg-transparent"
+                >
+                  <FolderInput strokeWidth={2} className="h-4.5" />
+                </Button>
+              </div>
+            ) : null}
+            {localPath && onOpenExternal ? (
               <div className="hidden py-0.5 md:block border border-border rounded-2xl backdrop-blur-lg">
                 <OpenExternalSelect
                   isMac={isMac}
@@ -210,7 +227,7 @@ export function ChatNavbar({
                 />
               </div>
             ) : null}
-            {(onToggleEmbeddedTerminal || onToggleRightSidebar || onExportTranscript) ? (
+            {localPath && (onToggleEmbeddedTerminal || onToggleRightSidebar || onExportTranscript) ? (
               <div className="flex items-center border border-border rounded-2xl px-2 py-0.5 backdrop-blur-lg">
                 <NavbarOverflowMenu
                   showOnDesktop={rightSidebarVisible}

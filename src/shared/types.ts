@@ -327,6 +327,10 @@ export interface ProjectSummary {
   updatedAt: number
 }
 
+export interface HiddenProjectSummary extends ProjectSummary {
+  hiddenAt: number
+}
+
 export interface SidebarChatRow {
   _id: string
   _creationTime: number

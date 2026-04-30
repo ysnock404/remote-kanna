@@ -59,6 +59,7 @@ export type ClientCommand =
   | { type: "project.create"; localPath: string; title: string; machineId?: MachineId }
   | { type: "project.rename"; projectId: string; title: string }
   | { type: "project.remove"; projectId: string }
+  | { type: "project.listHidden"; machineId?: MachineId }
   | { type: "filesystem.listDirectories"; machineId?: MachineId; path?: string }
   | { type: "filesystem.listProjectFiles"; projectId: string }
   | { type: "sidebar.reorderProjectGroups"; projectIds: string[] }
@@ -98,6 +99,7 @@ export type ClientCommand =
   | { type: "chat.create"; projectId: string }
   | { type: "chat.createGeneral" }
   | { type: "chat.fork"; chatId: string }
+  | { type: "chat.linkProject"; chatId: string; projectId: string }
   | { type: "chat.rename"; chatId: string; title: string }
   | { type: "chat.archive"; chatId: string }
   | { type: "chat.unarchive"; chatId: string }
