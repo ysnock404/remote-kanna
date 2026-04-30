@@ -922,21 +922,36 @@ function KannaSidebarImpl({
             {generalProjectGroups.length > 0 ? (
               <div className="pt-2">
                 <SidebarPanelLabel>General chats</SidebarPanelLabel>
-                <LocalProjectsSection
-                  projectGroups={generalProjectGroups}
-                  editorLabel={editorLabel}
-                  collapsedSections={collapsedSections}
-                  expandedGroups={expandedGroups}
-                  onToggleSection={toggleSection}
-                  onToggleExpandedGroup={toggleExpandedGroup}
-                  renderChatRow={renderChatRow}
-                  onNewLocalChat={() => {
-                    onCreateGeneralChat()
-                    onClose()
-                  }}
-                  isConnected={connectionStatus === "connected"}
-                  reorderable={false}
-                />
+                <div className="space-y-[2px]">
+                  {generalProjectGroups.map((group) => {
+                    const hasMore = group.olderChats.length > 0
+                    const isExpanded = expandedGroups.has(group.groupKey)
+                    return (
+                      <div key={group.groupKey} className="space-y-[2px]">
+                        {group.previewChats.map(renderChatRow)}
+                        {hasMore && isExpanded ? (
+                          <button
+                            type="button"
+                            onClick={() => toggleExpandedGroup(group.groupKey)}
+                            className="flex w-full justify-center py-1 text-xs text-muted-foreground/60 transition-colors hover:text-foreground/60"
+                          >
+                            Hide older
+                          </button>
+                        ) : null}
+                        {isExpanded ? group.olderChats.map(renderChatRow) : null}
+                        {hasMore && !isExpanded ? (
+                          <button
+                            type="button"
+                            onClick={() => toggleExpandedGroup(group.groupKey)}
+                            className="flex w-full justify-center py-1 text-xs text-muted-foreground/60 transition-colors hover:text-foreground/60"
+                          >
+                            Show older
+                          </button>
+                        ) : null}
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
             ) : null}
           </div>
