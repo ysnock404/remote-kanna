@@ -18,9 +18,7 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/screenshot.png" />
-    <source media="(prefers-color-scheme: light)" srcset="assets/screenshot-light.png" />
-    <img src="assets/screenshot.png" alt="Remote Kanna screenshot" width="800" />
+    <img src="https://github.com/user-attachments/assets/576b105e-e9a3-4be4-a9ec-cb72f2637479" alt="Remote Kanna screenshot" width="800" />
   </picture>
 </p>
 
