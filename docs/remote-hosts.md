@@ -13,7 +13,8 @@ to the active settings file (`~/.kanna/data/settings.json` in production).
       "enabled": true,
       "projectRoots": ["~/Projects", "~/work"],
       "codexEnabled": true,
-      "claudeEnabled": false
+      "claudeEnabled": false,
+      "terminalShell": "auto"
     }
   ]
 }
@@ -23,6 +24,8 @@ to the active settings file (`~/.kanna/data/settings.json` in production).
 discovery scans each configured root for git repositories up to two levels deep.
 Remote terminals are launched through `ssh`, and remote Codex uses
 `ssh <target> 'cd <project> && codex app-server'`.
+Set `terminalShell` to `cmd` for Windows OpenSSH hosts that should open embedded
+terminals in `cmd.exe` with a real TTY, including Tab completion and Ctrl+C.
 
 Current limits:
 

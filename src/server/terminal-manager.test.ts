@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import { mkdtemp, mkdir, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { TerminalManager } from "./terminal-manager"
+import { buildRemoteTerminalSshCommand, TerminalManager } from "./terminal-manager"
 
 const SHELL_START_TIMEOUT_MS = 5_000
 const COMMAND_TIMEOUT_MS = 5_000
@@ -96,6 +96,70 @@ async function createSession(terminalId: string) {
 async function waitForOutputToContain(getOutput: () => string, value: string, timeoutMs = COMMAND_TIMEOUT_MS) {
   await waitFor(() => getOutput().includes(value), timeoutMs)
 }
+
+test("uses cmd over TTY SSH for Windows remote terminals", () => {
+  const command = buildRemoteTerminalSshCommand({
+    id: "desktop-pc",
+    label: "Desktop",
+    sshTarget: "ysnock@100.84.223.44",
+    enabled: true,
+    projectRoots: [],
+    codexEnabled: true,
+    claudeEnabled: true,
+    terminalShell: "cmd",
+  }, "~")
+
+  expect(command).toContain("-tt")
+  expect(command).not.toContain("-T")
+  expect(command.at(-1)).toContain("cmd.exe /Q /K")
+})
+
+test("passes ctrl+c through remote terminals instead of interrupting ssh", () => {
+  const manager = new TerminalManager() as unknown as {
+    sessions: Map<
+      string,
+      {
+        status: "running" | "exited"
+        runtimeKind: "ssh"
+        focusReportingEnabled: boolean
+        terminal: { write: (data: string) => void }
+        process: { pid: number } | null
+      }
+    >
+    write: (terminalId: string, data: string) => void
+  }
+  const writes: string[] = []
+  const killCalls: Array<{ pid: number; signal?: NodeJS.Signals | number }> = []
+  const originalKill = process.kill
+
+  ;(process as typeof process & {
+    kill: (pid: number, signal?: NodeJS.Signals | number) => boolean
+  }).kill = ((pid: number, signal?: NodeJS.Signals | number) => {
+    killCalls.push({ pid, signal })
+    return true
+  }) as typeof process.kill
+
+  manager.sessions.set("terminal-remote-ctrl-c", {
+    status: "running",
+    runtimeKind: "ssh",
+    focusReportingEnabled: false,
+    terminal: {
+      write(data: string) {
+        writes.push(data)
+      },
+    },
+    process: { pid: 4321 },
+  })
+
+  try {
+    manager.write("terminal-remote-ctrl-c", "\x03")
+  } finally {
+    process.kill = originalKill
+  }
+
+  expect(writes).toEqual(["\x03"])
+  expect(killCalls).toEqual([])
+})
 
 describeIfSupported("TerminalManager", () => {
   test("ctrl+c interrupts the foreground job and keeps the shell alive", async () => {

@@ -22,14 +22,17 @@ interface RemoteDiscoveryRow {
 }
 
 const DEFAULT_SSH_TIMEOUT_MS = 10_000
+const REMOTE_DISCOVERY_FAILURE_LOG_TTL_MS = 60_000
+const lastRemoteDiscoveryFailureLog = new Map<string, { message: string; loggedAt: number }>()
 
-export function getServerSshClientArgs() {
+export function getServerSshClientArgs(options?: { connectTimeoutSeconds?: number }) {
   const legacyPrivateKeyPath = getLegacyServerSshPrivateKeyPath()
+  const connectTimeoutSeconds = Math.max(1, Math.round(options?.connectTimeoutSeconds ?? 5))
   return [
     "-o",
     "BatchMode=yes",
     "-o",
-    "ConnectTimeout=5",
+    `ConnectTimeout=${connectTimeoutSeconds}`,
     "-o",
     "IdentitiesOnly=yes",
     "-i",
@@ -38,8 +41,57 @@ export function getServerSshClientArgs() {
   ]
 }
 
+function logRemoteDiscoveryFailure(host: RemoteHostConfig, message: string) {
+  const now = Date.now()
+  const previous = lastRemoteDiscoveryFailureLog.get(host.id)
+  if (
+    previous
+    && previous.message === message
+    && now - previous.loggedAt < REMOTE_DISCOVERY_FAILURE_LOG_TTL_MS
+  ) {
+    return
+  }
+  lastRemoteDiscoveryFailureLog.set(host.id, { message, loggedAt: now })
+  console.warn(`[kanna] remote discovery failed for ${host.label}: ${message}`)
+}
+
 export function shellQuote(value: string) {
   return `'${value.replaceAll("'", "'\\''")}'`
+}
+
+function powershellEncodedCommand(command: string) {
+  return Buffer.from(command, "utf16le").toString("base64")
+}
+
+export function getRemotePosixCommand(host: RemoteHostConfig, command: string) {
+  if (host.terminalShell !== "cmd") return command
+
+  const encodedCommand = Buffer.from(command, "utf8").toString("base64")
+  const powershellCommand = [
+    "$ErrorActionPreference = 'Stop'",
+    "$ProgressPreference = 'SilentlyContinue'",
+    "$exitCode = 0",
+    "$scriptDir = Join-Path $env:USERPROFILE '.kanna-tmp'",
+    "$gitBash = 'C:\\Program Files\\Git\\usr\\bin\\bash.exe'",
+    "$cygpath = 'C:\\Program Files\\Git\\usr\\bin\\cygpath.exe'",
+    "if (!(Test-Path $gitBash)) { $gitBash = 'bash' }",
+    "if (!(Test-Path $cygpath)) { $cygpath = 'cygpath' }",
+    "New-Item -ItemType Directory -Path $scriptDir -Force | Out-Null",
+    "$scriptPath = Join-Path $scriptDir ('remote-command-' + [Guid]::NewGuid().ToString('N') + '.sh')",
+    "$bashScriptPath = $scriptPath",
+    "try {",
+    `  [IO.File]::WriteAllText($scriptPath, [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedCommand}')), [Text.UTF8Encoding]::new($false))`,
+    "  $convertedPath = (& $cygpath -u $scriptPath 2>$null)",
+    "  if ($LASTEXITCODE -eq 0 -and $convertedPath) { $bashScriptPath = $convertedPath.Trim() }",
+    "  & $gitBash $bashScriptPath",
+    "  $exitCode = $LASTEXITCODE",
+    "} finally {",
+    "  Remove-Item $scriptPath -Force -ErrorAction SilentlyContinue",
+    "}",
+    "exit $exitCode",
+  ].join("\n")
+
+  return `powershell -NoLogo -NoProfile -NonInteractive -EncodedCommand ${powershellEncodedCommand(powershellCommand)}`
 }
 
 export function remotePathExpression(remotePath: string) {
@@ -47,6 +99,29 @@ export function remotePathExpression(remotePath: string) {
   if (trimmed === "~") return "$HOME"
   if (trimmed.startsWith("~/")) return `$HOME${shellQuote(trimmed.slice(1))}`
   return shellQuote(trimmed)
+}
+
+function cmdQuote(value: string) {
+  return `"${value.replaceAll("\"", "\"\"")}"`
+}
+
+function toCmdPath(remotePath: string) {
+  const trimmed = remotePath.trim()
+  if (trimmed === "~") return "%USERPROFILE%"
+  if (trimmed.startsWith("~/")) {
+    return `%USERPROFILE%/${trimmed.slice(2)}`
+  }
+
+  const drivePath = trimmed.match(/^\/([a-zA-Z])(?:\/(.*))?$/)
+  if (drivePath) {
+    return `${drivePath[1].toUpperCase()}:/${drivePath[2] ?? ""}`
+  }
+
+  return trimmed
+}
+
+export function getRemoteCmdTerminalCommand(cwd: string) {
+  return `cd /d ${cmdQuote(toCmdPath(cwd))} && cmd.exe /Q /K`
 }
 
 function assertRemotePath(localPath: string) {
@@ -101,11 +176,12 @@ export function resolveProjectRuntime(machineId: MachineId, remoteHosts: RemoteH
 
 export async function runSshWithInput(host: RemoteHostConfig, remoteCommand: string, input: string | null, timeoutMs = DEFAULT_SSH_TIMEOUT_MS): Promise<SshResult> {
   await ensureServerSshPublicKey()
+  const connectTimeoutSeconds = Math.max(1, Math.ceil(timeoutMs / 1000))
   const child = Bun.spawn([
     "ssh",
-    ...getServerSshClientArgs(),
+    ...getServerSshClientArgs({ connectTimeoutSeconds }),
     host.sshTarget,
-    remoteCommand,
+    getRemotePosixCommand(host, remoteCommand),
   ], {
     stdin: input === null ? "ignore" : "pipe",
     stdout: "pipe",
@@ -168,8 +244,45 @@ export async function verifyRemoteProjectDirectory(host: RemoteHostConfig, local
   return result.stdout.trim().split("\n").at(-1) || targetPath
 }
 
+function getRemoteToolPathBootstrapCommand(toolName: "codex" | "node") {
+  return [
+    `if ! command -v ${toolName} >/dev/null 2>&1; then`,
+    "  if [ -s \"$HOME/.nvm/nvm.sh\" ]; then",
+    "    . \"$HOME/.nvm/nvm.sh\" >/dev/null 2>&1",
+    "    nvm use --silent default >/dev/null 2>&1 || true",
+    "  fi",
+    "fi",
+    `if ! command -v ${toolName} >/dev/null 2>&1 && [ -d "$HOME/.nvm/versions/node" ]; then`,
+    `  tool_bin="$(find "$HOME/.nvm/versions/node" -path "*/bin/${toolName}" -type f 2>/dev/null | head -n 1)"`,
+    "  if [ -n \"$tool_bin\" ]; then",
+    `    PATH="\${tool_bin%/${toolName}}:$PATH"`,
+    "    export PATH",
+    "  fi",
+    "fi",
+  ].join("\n")
+}
+
+function getRemoteCodexPathBootstrapCommand() {
+  return getRemoteToolPathBootstrapCommand("codex")
+}
+
+export function getRemoteNodePathBootstrapCommand() {
+  return getRemoteToolPathBootstrapCommand("node")
+}
+
+export function getRemoteNodeCommand(command: string) {
+  return [
+    getRemoteNodePathBootstrapCommand(),
+    command,
+  ].join("\n")
+}
+
 export function getRemoteCodexAppServerCommand(cwd: string) {
-  return `cd ${remotePathExpression(cwd)} && exec codex app-server`
+  return [
+    `cd ${remotePathExpression(cwd)} || exit`,
+    getRemoteCodexPathBootstrapCommand(),
+    "exec codex app-server",
+  ].join("\n")
 }
 
 export function getRemoteShellCommand(cwd: string) {
@@ -555,21 +668,21 @@ export async function discoverRemoteProjectsWithStatus(remoteHosts: RemoteHostCo
 
   await Promise.all(remoteHosts.filter((host) => host.enabled).map(async (host) => {
     const machineId = toRemoteMachineId(host.id)
-    const nodeCheck = await runSsh(host, "command -v node >/dev/null 2>&1", 5_000)
+    const nodeCheck = await runSsh(host, getRemoteNodeCommand("command -v node >/dev/null 2>&1"), 2_500)
     if (nodeCheck.exitCode !== 0 && nodeCheck.stderr.trim()) {
       const message = nodeCheck.stderr.trim()
       connectionSnapshots[machineId] = { status: "problem", message }
-      console.warn(`[kanna] remote discovery failed for ${host.label}: ${message}`)
+      logRemoteDiscoveryFailure(host, message)
       return
     }
 
     const result = nodeCheck.exitCode === 0
-      ? await runSshWithInput(host, "node -", getRemoteNodeDiscoveryScript(host.projectRoots), 20_000)
+      ? await runSshWithInput(host, getRemoteNodeCommand("node -"), getRemoteNodeDiscoveryScript(host.projectRoots), 20_000)
       : await runSsh(host, getLegacyRemoteProjectRootDiscoveryCommand(host.projectRoots), 15_000)
     if (result.exitCode !== 0) {
       const message = result.stderr.trim() || `exit ${result.exitCode}`
       connectionSnapshots[machineId] = { status: "problem", message }
-      console.warn(`[kanna] remote discovery failed for ${host.label}: ${message}`)
+      logRemoteDiscoveryFailure(host, message)
       return
     }
 
@@ -579,7 +692,7 @@ export async function discoverRemoteProjectsWithStatus(remoteHosts: RemoteHostCo
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       connectionSnapshots[machineId] = { status: "problem", message }
-      console.warn(`[kanna] remote discovery failed for ${host.label}: ${message}`)
+      logRemoteDiscoveryFailure(host, message)
       return
     }
 

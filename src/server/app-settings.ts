@@ -26,6 +26,7 @@ import {
   type MachineAliases,
   type ProviderPreference,
   type RemoteHostConfig,
+  type RemoteHostTerminalShell,
 } from "../shared/types"
 
 interface AppSettingsFile {
@@ -166,6 +167,10 @@ function normalizeRemoteHostId(value: unknown) {
     .replace(/^-|-$/g, "")
 }
 
+function normalizeRemoteHostTerminalShell(value: unknown): RemoteHostTerminalShell {
+  return value === "cmd" || value === "posix" || value === "auto" ? value : "auto"
+}
+
 function normalizeRemoteHosts(value: unknown, warnings: string[]): RemoteHostConfig[] {
   if (value === undefined) return []
   if (!Array.isArray(value)) {
@@ -205,7 +210,8 @@ function normalizeRemoteHosts(value: unknown, warnings: string[]): RemoteHostCon
       .map((root) => typeof root === "string" ? root.trim() : "")
       .filter(Boolean)
 
-    hosts.push({
+    const terminalShell = normalizeRemoteHostTerminalShell(record.terminalShell)
+    const host: RemoteHostConfig = {
       id,
       label,
       sshTarget,
@@ -213,7 +219,12 @@ function normalizeRemoteHosts(value: unknown, warnings: string[]): RemoteHostCon
       projectRoots,
       codexEnabled: record.codexEnabled !== false,
       claudeEnabled: record.claudeEnabled === true,
-    })
+    }
+    if (terminalShell !== "auto") {
+      host.terminalShell = terminalShell
+    }
+
+    hosts.push(host)
   }
 
   return hosts

@@ -4,7 +4,7 @@ import path from "node:path"
 import { fileTypeFromBuffer } from "file-type"
 import type { ChatAttachment, RemoteHostConfig } from "../shared/types"
 import { getProjectUploadDir } from "./paths"
-import { remotePathExpression, runSsh, runSshWithInput, shellQuote } from "./remote-hosts"
+import { getRemoteNodeCommand, remotePathExpression, runSsh, runSshWithInput, shellQuote } from "./remote-hosts"
 
 const DEFAULT_BINARY_MIME_TYPE = "application/octet-stream"
 const IMAGE_MIME_PREFIX = "image/"
@@ -243,9 +243,9 @@ export async function persistRemoteProjectUpload(args: {
   const mimeType = await getUploadMimeType(args.bytes, args.fallbackMimeType)
   const candidates = getUploadCandidateNames(args.fileName)
   const command = [
-    `cd ${remotePathExpression(args.localPath)}`,
-    `node -e ${shellQuote(getRemoteUploadScript(candidates))}`,
-  ].join(" && ")
+    `cd ${remotePathExpression(args.localPath)} || exit`,
+    getRemoteNodeCommand(`node -e ${shellQuote(getRemoteUploadScript(candidates))}`),
+  ].join("\n")
   const result = await runSshWithInput(args.host, command, Buffer.from(args.bytes).toString("base64"), 30_000)
   if (result.exitCode !== 0) {
     throw new Error(result.stderr.trim() || `Failed to upload file to ${args.host.label}`)
@@ -317,9 +317,9 @@ export async function readRemoteProjectUpload(args: {
   }
 
   const command = [
-    `cd ${remotePathExpression(args.localPath)}`,
-    `node -e ${shellQuote(getRemoteReadUploadScript(args.storedName))}`,
-  ].join(" && ")
+    `cd ${remotePathExpression(args.localPath)} || exit`,
+    getRemoteNodeCommand(`node -e ${shellQuote(getRemoteReadUploadScript(args.storedName))}`),
+  ].join("\n")
   const result = await runSsh(args.host, command, 30_000)
   if (result.exitCode === 3) {
     return null
@@ -346,9 +346,9 @@ export async function deleteRemoteProjectUpload(args: {
   }
 
   const command = [
-    `cd ${remotePathExpression(args.localPath)}`,
-    `node -e ${shellQuote(getRemoteDeleteUploadScript(args.storedName))}`,
-  ].join(" && ")
+    `cd ${remotePathExpression(args.localPath)} || exit`,
+    getRemoteNodeCommand(`node -e ${shellQuote(getRemoteDeleteUploadScript(args.storedName))}`),
+  ].join("\n")
   const result = await runSsh(args.host, command, 15_000)
   if (result.exitCode !== 0) {
     return false

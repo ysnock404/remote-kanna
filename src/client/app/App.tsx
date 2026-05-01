@@ -362,8 +362,8 @@ function KannaLayout() {
         })
       }}
       onCreateChat={handleSidebarCreateChat}
-      onCreateGeneralChat={() => {
-        void state.handleCreateGeneralChat()
+      onCreateGeneralChat={(machineId: MachineId) => {
+        void state.handleCreateGeneralChat(machineId)
       }}
       onForkChat={handleSidebarForkChat}
       currentProjectId={state.activeProjectId}

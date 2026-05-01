@@ -421,6 +421,63 @@ describe("AgentCoordinator codex integration", () => {
     ])
   })
 
+  test("uses configured Codex default when a new chat send omits provider", async () => {
+    const fakeCodexManager = {
+      async startSession() {},
+      async startTurn(): Promise<HarnessTurn> {
+        async function* stream() {
+          yield {
+            type: "transcript" as const,
+            entry: timestamped({
+              kind: "system_init",
+              provider: "codex",
+              model: "gpt-5.5",
+              tools: [],
+              agents: [],
+              slashCommands: [],
+              mcpServers: [],
+            }),
+          }
+          yield {
+            type: "transcript" as const,
+            entry: timestamped({
+              kind: "result",
+              subtype: "success",
+              isError: false,
+              durationMs: 0,
+              result: "",
+            }),
+          }
+        }
+
+        return {
+          provider: "codex",
+          stream: stream(),
+          interrupt: async () => {},
+          close: () => {},
+        }
+      },
+    }
+
+    const store = createFakeStore()
+    const coordinator = new AgentCoordinator({
+      store: store as never,
+      onStateChange: () => {},
+      codexManager: fakeCodexManager as never,
+      getDefaultProvider: () => "codex",
+    })
+
+    await coordinator.send({
+      type: "chat.send",
+      chatId: "chat-1",
+      content: "use the default provider",
+    })
+
+    await waitFor(() => store.turnFinishedCount === 1)
+    expect(store.chat.provider).toBe("codex")
+    expect(store.messages.some((entry) => entry.kind === "system_init" && entry.provider === "codex")).toBe(true)
+  })
+
   test("binds codex provider and reuses the session token on later turns", async () => {
     const sessionCalls: Array<{ chatId: string; sessionToken: string | null }> = []
     const fakeCodexManager = {
@@ -495,7 +552,7 @@ describe("AgentCoordinator codex integration", () => {
     ])
   })
 
-  test("tells providers that general chat has no attached project", async () => {
+  test("sends general chat prompts without adding project guardrails", async () => {
     const startTurnCalls: string[] = []
     const fakeCodexManager = {
       async startSession() {},
@@ -543,8 +600,7 @@ describe("AgentCoordinator codex integration", () => {
       model: "gpt-5.4",
     })
 
-    expect(startTurnCalls[0]).toContain("This conversation is a general chat. No user project or repository is attached.")
-    expect(startTurnCalls[0]).toContain("qual e o estado do projeto?")
+    expect(startTurnCalls[0]).toBe("qual e o estado do projeto?")
     const userPrompt = store.messages.find((entry) => entry.kind === "user_prompt")
     expect(userPrompt).toMatchObject({
       kind: "user_prompt",

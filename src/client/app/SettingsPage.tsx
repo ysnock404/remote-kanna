@@ -35,6 +35,7 @@ import {
   type MachineSummary,
   type MachineId,
   type RemoteHostConfig,
+  type RemoteHostTerminalShell,
   type SshPublicKeySnapshot,
   type UpdateSnapshot,
 } from "../../shared/types"
@@ -153,6 +154,11 @@ type FetchReleases = (input: string, init?: RequestInit) => Promise<Response>
 
 let changelogCache: ChangelogCache | null = null
 const KEYBINDING_ACTIONS = Object.keys(KEYBINDING_ACTION_LABELS) as KeybindingAction[]
+const REMOTE_TERMINAL_SHELL_OPTIONS: Array<{ value: RemoteHostTerminalShell; label: string }> = [
+  { value: "auto", label: "Auto" },
+  { value: "cmd", label: "Windows cmd" },
+  { value: "posix", label: "POSIX shell" },
+]
 
 type SshHostDraft = {
   id: string
@@ -162,6 +168,7 @@ type SshHostDraft = {
   enabled: boolean
   codexEnabled: boolean
   claudeEnabled: boolean
+  terminalShell: RemoteHostTerminalShell
 }
 
 export function getKeybindingsSubtitle(filePathDisplay: string) {
@@ -236,6 +243,7 @@ function createSshHostDraft(host?: RemoteHostConfig): SshHostDraft {
     enabled: host?.enabled ?? true,
     codexEnabled: host?.codexEnabled ?? true,
     claudeEnabled: host?.claudeEnabled ?? true,
+    terminalShell: host?.terminalShell ?? "auto",
   }
 }
 
@@ -282,7 +290,7 @@ export function buildRemoteHostsFromDrafts(drafts: SshHostDraft[]): RemoteHostCo
     }
     seenIds.add(id)
 
-    hosts.push({
+    const host: RemoteHostConfig = {
       id,
       label: label || sshTarget,
       sshTarget,
@@ -290,7 +298,12 @@ export function buildRemoteHostsFromDrafts(drafts: SshHostDraft[]): RemoteHostCo
       projectRoots,
       codexEnabled: draft.codexEnabled,
       claudeEnabled: draft.claudeEnabled,
-    })
+    }
+    if (draft.terminalShell !== "auto") {
+      host.terminalShell = draft.terminalShell
+    }
+
+    hosts.push(host)
   }
 
   return hosts
@@ -1873,7 +1886,7 @@ export function SettingsPage() {
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
-                    <div className="grid gap-3 md:grid-cols-2">
+                    <div className="grid gap-3 md:grid-cols-[1fr_1fr_180px]">
                       <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
                         <span>Display Name</span>
                         <Input
@@ -1890,6 +1903,26 @@ export function SettingsPage() {
                           placeholder="ysnock@100.84.223.44"
                           className="font-mono"
                         />
+                      </label>
+                      <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
+                        <span>Terminal Shell</span>
+                        <Select
+                          value={host.terminalShell}
+                          onValueChange={(value) => updateSshHostDraft(index, { terminalShell: value as RemoteHostTerminalShell })}
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectGroup>
+                              {REMOTE_TERMINAL_SHELL_OPTIONS.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
                       </label>
                     </div>
                     <label className="block space-y-1.5 text-xs font-medium text-muted-foreground">

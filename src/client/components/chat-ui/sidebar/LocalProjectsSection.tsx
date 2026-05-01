@@ -1,5 +1,5 @@
 import { memo, type MouseEvent as ReactMouseEvent, type ReactNode, useMemo } from "react"
-import { ChevronRight, Loader2, MoreHorizontal, SquarePen } from "lucide-react"
+import { ChevronRight, Code, Loader2, MoreHorizontal, SquarePen } from "lucide-react"
 import {
   DndContext,
   PointerSensor,
@@ -23,6 +23,7 @@ import { Button } from "../../ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip"
 import type { MachineId, SidebarChatRow, SidebarProjectGroup } from "../../../../shared/types"
 import { APP_NAME } from "../../../../shared/branding"
+import { LOCAL_MACHINE_ID } from "../../../../shared/project-location"
 import { getPathBasename } from "../../../lib/formatters"
 import { cn } from "../../../lib/utils"
 import { ProjectSectionMenu } from "./Menus"
@@ -40,6 +41,7 @@ interface Props {
   onRenameProject?: (projectId: string, currentTitle: string) => void
   onCopyPath?: (localPath: string) => void
   onOpenExternalPath?: (action: "open_finder" | "open_editor", localPath: string, machineId?: MachineId) => void
+  onOpenVscodeRemote?: (localPath: string, machineId?: MachineId) => void
   onHideProject?: (projectId: string) => void
   onReorderGroups?: (newOrder: string[]) => void
   reorderable?: boolean
@@ -60,6 +62,7 @@ interface SortableProjectGroupProps {
   onRenameProject?: (projectId: string, currentTitle: string) => void
   onCopyPath?: (localPath: string) => void
   onOpenExternalPath?: (action: "open_finder" | "open_editor", localPath: string, machineId?: MachineId) => void
+  onOpenVscodeRemote?: (localPath: string, machineId?: MachineId) => void
   onHideProject?: (projectId: string) => void
   isConnected?: boolean
   startingLocalPath?: string | null
@@ -188,6 +191,7 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
   onRenameProject,
   onCopyPath,
   onOpenExternalPath,
+  onOpenVscodeRemote,
   onHideProject,
   isConnected,
   startingLocalPath,
@@ -200,6 +204,12 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
   const isEmptyProject = group.chats.length === 0
   const hasMore = group.olderChats.length > 0
   const hasProjectMenu = Boolean(!group.isGeneralChat && onHideProject && onCopyPath && onOpenExternalPath)
+  const canOpenVscodeRemote = Boolean(
+    !group.isGeneralChat
+    && group.machineId
+    && group.machineId !== LOCAL_MACHINE_ID
+    && onOpenVscodeRemote
+  )
 
   const {
     attributes,
@@ -257,6 +267,27 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
       </div>
       {(hasProjectMenu || onNewLocalChat) && (
         <div className="absolute right-2 flex items-center gap-[1px] opacity-100 md:opacity-0 md:group-hover/section:opacity-100">
+          {canOpenVscodeRemote ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5.5 w-5.5 !rounded"
+                  title="Open in VS Code SSH"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onOpenVscodeRemote?.(localPath, group.machineId)
+                  }}
+                >
+                  <Code className="size-3.5 text-slate-500 dark:text-slate-400" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right" sideOffset={4}>
+                Open in VS Code SSH
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
           {hasProjectMenu ? (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -326,6 +357,7 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
           onShowArchived={() => onShowArchivedProject?.(groupKey)}
           onOpenInFinder={() => onOpenExternalPath?.("open_finder", localPath, group.machineId)}
           onOpenInEditor={() => onOpenExternalPath?.("open_editor", localPath, group.machineId)}
+          onOpenInVscodeRemote={canOpenVscodeRemote ? () => onOpenVscodeRemote?.(localPath, group.machineId) : undefined}
           onHide={() => onHideProject?.(groupKey)}
         >
           {header}
@@ -383,6 +415,7 @@ const LocalProjectsSectionImpl = function LocalProjectsSection({
   onRenameProject,
   onCopyPath,
   onOpenExternalPath,
+  onOpenVscodeRemote,
   onHideProject,
   onReorderGroups,
   reorderable = Boolean(onReorderGroups),
@@ -465,6 +498,7 @@ const LocalProjectsSectionImpl = function LocalProjectsSection({
           onRenameProject={onRenameProject}
           onCopyPath={onCopyPath}
           onOpenExternalPath={onOpenExternalPath}
+          onOpenVscodeRemote={onOpenVscodeRemote}
           onHideProject={onHideProject}
           isConnected={isConnected}
           startingLocalPath={startingLocalPath}

@@ -11,7 +11,7 @@ import type {
   TranscriptEntry,
 } from "../shared/types"
 import type { HarnessEvent, HarnessToolRequest, HarnessTurn } from "./harness-types"
-import { getRemoteCodexAppServerCommand, getServerSshClientArgs, type ProjectRuntime } from "./remote-hosts"
+import { getRemoteCodexAppServerCommand, getRemotePosixCommand, getServerSshClientArgs, type ProjectRuntime } from "./remote-hosts"
 import {
   type CollabAgentToolCallItem,
   type ContextCompactedNotification,
@@ -750,7 +750,7 @@ export class CodexAppServerManager {
         return spawn("ssh", [
           ...getServerSshClientArgs(),
           runtime.host.sshTarget,
-          getRemoteCodexAppServerCommand(cwd),
+          getRemotePosixCommand(runtime.host, getRemoteCodexAppServerCommand(cwd)),
         ], {
           stdio: ["pipe", "pipe", "pipe"],
           env: process.env,

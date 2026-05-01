@@ -22,7 +22,6 @@ import { resolveLocalPath } from "./paths"
 const COMPACTION_THRESHOLD_BYTES = 2 * 1024 * 1024
 const STALE_EMPTY_CHAT_MAX_AGE_MS = 30 * 60 * 1000
 const SIDEBAR_PROJECT_ORDER_FILE = "sidebar-order.json"
-const GENERAL_CHAT_WORKSPACE_DIR = "general-chat-workspace"
 
 function normalizeProjectPath(machineId: MachineId, localPath: string) {
   if (machineId === LOCAL_MACHINE_ID) {
@@ -267,8 +266,7 @@ export class EventStore {
         }
       }
     } catch (error) {
-      console.warn(`${LOG_PREFIX} Failed to load snapshot, resetting local history:`, error)
-      await this.clearStorage()
+      console.warn(`${LOG_PREFIX} Failed to load snapshot, replaying event logs only:`, error)
     }
   }
 
@@ -444,6 +442,9 @@ export class EventStore {
         const machineId = normalizeMachineId(event.machineId)
         const localPath = normalizeProjectPath(machineId, event.localPath)
         const existing = this.state.projectsById.get(event.projectId)
+        if (existing) {
+          this.state.projectIdsByPath.delete(getProjectLocationKey(normalizeMachineId(existing.machineId), existing.localPath))
+        }
         const project = {
           id: event.projectId,
           machineId,
@@ -652,6 +653,21 @@ export class EventStore {
     return path.join(this.transcriptsDir, `${chatId}.jsonl`)
   }
 
+  private async replaceTranscript(chatId: string, entries: TranscriptEntry[]) {
+    const transcriptPath = this.transcriptPath(chatId)
+    const clonedEntries = cloneTranscriptEntries(entries)
+    const payload = clonedEntries.map((entry) => JSON.stringify(entry)).join("\n")
+    this.writeChain = this.writeChain.then(async () => {
+      await mkdir(this.transcriptsDir, { recursive: true })
+      await writeFile(transcriptPath, payload ? `${payload}\n` : "", "utf8")
+      for (const entry of clonedEntries) {
+        this.applyMessageMetadata(chatId, entry)
+      }
+      this.cachedTranscript = { chatId, entries: cloneTranscriptEntries(clonedEntries) }
+    })
+    await this.writeChain
+  }
+
   private loadTranscriptFromDisk(chatId: string) {
     const transcriptPath = this.transcriptPath(chatId)
     if (!existsSync(transcriptPath)) {
@@ -718,10 +734,40 @@ export class EventStore {
     return this.state.projectsById.get(projectId)!
   }
 
-  async ensureGeneralChatProject() {
-    const localPath = path.join(this.dataDir, GENERAL_CHAT_WORKSPACE_DIR)
-    await mkdir(localPath, { recursive: true })
-    return await this.openProject(localPath, "General Chat", LOCAL_MACHINE_ID, { isGeneralChat: true })
+  async ensureGeneralChatProject(machineId: MachineId = LOCAL_MACHINE_ID, localPath?: string) {
+    const normalizedMachineId = normalizeMachineId(machineId)
+    const targetPath = localPath ?? (normalizedMachineId === LOCAL_MACHINE_ID ? homedir() : "~")
+    const normalized = normalizeProjectPath(normalizedMachineId, targetPath)
+    if (normalizedMachineId === LOCAL_MACHINE_ID) {
+      await mkdir(normalized, { recursive: true })
+    }
+
+    const existing = [...this.state.projectsById.values()]
+      .find((project) => (
+        project.isGeneralChat
+        && !project.deletedAt
+        && normalizeMachineId(project.machineId) === normalizedMachineId
+      ))
+    if (existing) {
+      if (existing.localPath === normalized) {
+        return existing
+      }
+
+      const event: ProjectEvent = {
+        v: STORE_VERSION,
+        type: "project_opened",
+        timestamp: Date.now(),
+        projectId: existing.id,
+        machineId: normalizedMachineId,
+        localPath: normalized,
+        title: existing.title || "General Chat",
+        isGeneralChat: true,
+      }
+      await this.append(this.projectsLogPath, event)
+      return this.state.projectsById.get(existing.id)!
+    }
+
+    return await this.openProject(normalized, "General Chat", normalizedMachineId, { isGeneralChat: true })
   }
 
   async removeProject(projectId: string) {
@@ -801,6 +847,72 @@ export class EventStore {
     }
     await this.append(this.chatsLogPath, event)
     return this.state.chatsById.get(chatId)!
+  }
+
+  async importCodexSessionChat(args: {
+    sessionToken: string
+    title: string
+    entries: TranscriptEntry[]
+    createdAt: number
+    updatedAt: number
+    homeDir?: string
+  }) {
+    const existing = [...this.state.chatsById.values()]
+      .find((chat) => chat.sessionToken === args.sessionToken || chat.pendingForkSessionToken === args.sessionToken)
+    if (existing) {
+      if (existing.deletedAt) {
+        return { chat: null, imported: false, updated: false }
+      }
+
+      const project = this.state.projectsById.get(existing.projectId)
+      const currentEntries = project?.isGeneralChat && existing.provider === "codex"
+        ? this.getMessages(existing.id)
+        : []
+      if (args.entries.length > currentEntries.length) {
+        await this.replaceTranscript(existing.id, args.entries)
+        return { chat: existing, imported: false, updated: true }
+      }
+
+      return { chat: existing, imported: false, updated: false }
+    }
+
+    const project = await this.ensureGeneralChatProject(LOCAL_MACHINE_ID, args.homeDir)
+    const chatId = crypto.randomUUID()
+    const createdAt = Number.isFinite(args.createdAt) ? args.createdAt : Date.now()
+    const updatedAt = Number.isFinite(args.updatedAt) ? args.updatedAt : createdAt
+    const title = args.title.trim() || "Codex session"
+    const createEvent: ChatEvent = {
+      v: STORE_VERSION,
+      type: "chat_created",
+      timestamp: createdAt,
+      chatId,
+      projectId: project.id,
+      title,
+    }
+    const providerEvent: ChatEvent = {
+      v: STORE_VERSION,
+      type: "chat_provider_set",
+      timestamp: updatedAt,
+      chatId,
+      provider: "codex",
+    }
+    const sessionEvent: TurnEvent = {
+      v: STORE_VERSION,
+      type: "session_token_set",
+      timestamp: updatedAt,
+      chatId,
+      sessionToken: args.sessionToken,
+    }
+
+    await this.append(this.chatsLogPath, createEvent)
+    await this.append(this.chatsLogPath, providerEvent)
+    await this.append(this.turnsLogPath, sessionEvent)
+
+    if (args.entries.length > 0) {
+      await this.replaceTranscript(chatId, args.entries)
+    }
+
+    return { chat: this.state.chatsById.get(chatId)!, imported: true, updated: false }
   }
 
   async forkChat(sourceChatId: string) {
@@ -1340,7 +1452,9 @@ export class EventStore {
 
   async compact() {
     const snapshot = this.createSnapshot()
-    await Bun.write(this.snapshotPath, JSON.stringify(snapshot, null, 2))
+    const tempPath = `${this.snapshotPath}.${process.pid}.${Date.now()}.tmp`
+    await writeFile(tempPath, JSON.stringify(snapshot, null, 2), "utf8")
+    await rename(tempPath, this.snapshotPath)
     await Promise.all([
       Bun.write(this.projectsLogPath, ""),
       Bun.write(this.chatsLogPath, ""),

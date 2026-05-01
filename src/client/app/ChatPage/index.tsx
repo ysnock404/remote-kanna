@@ -13,6 +13,7 @@ import { actionMatchesEvent, getResolvedKeybindings } from "../../lib/keybinding
 import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow"
 import { cn } from "../../lib/utils"
 import { getPathBasename } from "../../lib/formatters"
+import { getBrowserSshTargetForPath, getVscodeRemoteSshUri } from "../../lib/vscodeRemote"
 import {
   DEFAULT_RIGHT_SIDEBAR_SIZE,
   DEFAULT_RIGHT_SIDEBAR_VISIBILITY_STATE,
@@ -454,6 +455,24 @@ export function ChatPage() {
   const isGeneralChat = Boolean(state.runtime?.isGeneralChat)
   const projectId = isGeneralChat ? null : state.activeProjectId
   const uploadProjectId = state.runtime?.projectId ?? state.activeProjectId
+  const currentProjectGroup = useMemo(
+    () => projectId ? state.sidebarData.projectGroups.find((group) => group.groupKey === projectId) ?? null : null,
+    [projectId, state.sidebarData.projectGroups]
+  )
+  const machinesById = useMemo(
+    () => new Map((state.localProjects?.machines ?? []).map((machine) => [machine.id, machine])),
+    [state.localProjects?.machines]
+  )
+  const vscodeRemoteUri = useMemo(() => {
+    const workspacePath = state.navbarLocalPath ?? state.runtime?.localPath ?? currentProjectGroup?.localPath
+    const machineId = state.runtime?.machineId ?? currentProjectGroup?.machineId
+    if (!workspacePath || !machineId || isGeneralChat) return null
+    return getVscodeRemoteSshUri(
+      machinesById.get(machineId) ?? { id: machineId },
+      workspacePath,
+      { fallbackSshTarget: getBrowserSshTargetForPath(workspacePath) }
+    )
+  }, [currentProjectGroup?.localPath, currentProjectGroup?.machineId, isGeneralChat, machinesById, state.navbarLocalPath, state.runtime?.localPath, state.runtime?.machineId])
   const linkableProjectGroups = useMemo(
     () => state.sidebarData.projectGroups.filter((group) => !group.isGeneralChat),
     [state.sidebarData.projectGroups]
@@ -644,6 +663,11 @@ export function ChatPage() {
   const handleOpenExternal = useCallback<NonNullable<ComponentProps<typeof ChatNavbar>["onOpenExternal"]>>((action, editor) => {
     void state.handleOpenExternal(action, editor)
   }, [state.handleOpenExternal])
+
+  const handleOpenVscodeRemote = useCallback(() => {
+    if (!vscodeRemoteUri) return
+    window.location.assign(vscodeRemoteUri)
+  }, [vscodeRemoteUri])
 
   const handleListProjectFiles = useCallback(async () => {
     if (!projectId) {
@@ -903,6 +927,7 @@ export function ChatPage() {
             setLinkProjectError(null)
             setLinkProjectDialogOpen(true)
           } : undefined}
+          onOpenVscodeRemote={vscodeRemoteUri ? handleOpenVscodeRemote : undefined}
           onOpenExternal={isGeneralChat ? undefined : handleOpenExternal}
           onExportTranscript={state.activeChatId ? () => void state.handleShareChat(state.activeChatId) : undefined}
           canExportTranscript={Boolean(state.activeChatId) && !state.isExportingStandalone}

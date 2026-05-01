@@ -16,7 +16,7 @@ import { openExternal, openExternalOnRemote } from "./external-open"
 import { KeybindingsManager } from "./keybindings"
 import { ensureProjectDirectory, resolveLocalPath } from "./paths"
 import { getProjectLocationKey, LOCAL_MACHINE_ID, normalizeMachineId } from "../shared/project-location"
-import { ensureRemoteProjectDirectory, remotePathExpression, resolveProjectRuntime, runSsh, shellQuote, verifyRemoteProjectDirectory, type RemoteMachineConnectionSnapshots } from "./remote-hosts"
+import { ensureRemoteProjectDirectory, getRemoteNodeCommand, remotePathExpression, resolveProjectRuntime, runSsh, shellQuote, verifyRemoteProjectDirectory, type RemoteMachineConnectionSnapshots } from "./remote-hosts"
 import { ensureServerSshPublicKey } from "./ssh-keys"
 import { writeStandaloneTranscriptExport } from "./standalone-export"
 import { TerminalManager } from "./terminal-manager"
@@ -396,9 +396,9 @@ console.log(JSON.stringify({
 
 async function listRemoteProjectFiles(projectId: string, machineId: MachineId, host: RemoteHostConfig, localPath: string): Promise<ProjectFileTreeSnapshot> {
   const command = [
-    `cd ${remotePathExpression(localPath)}`,
-    `node -e ${shellQuote(getRemoteProjectFilesScript())}`,
-  ].join(" && ")
+    `cd ${remotePathExpression(localPath)} || exit`,
+    getRemoteNodeCommand(`node -e ${shellQuote(getRemoteProjectFilesScript())}`),
+  ].join("\n")
   const result = await runSsh(host, command, 15_000)
   if (result.exitCode !== 0) {
     throw new Error(result.stderr.trim() || `Failed to list files on ${host.label}`)
@@ -1457,7 +1457,11 @@ export function createWsRouter({
           return
         }
         case "chat.createGeneral": {
-          const project = await store.ensureGeneralChatProject()
+          const machineId = normalizeMachineId(command.machineId)
+          if (machineId !== LOCAL_MACHINE_ID) {
+            resolveSshHost(machineId)
+          }
+          const project = await store.ensureGeneralChatProject(machineId)
           const chat = await store.createChat(project.id)
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result: { chatId: chat.id, projectId: project.id } })
           resolvedAnalytics.track("chat_created")

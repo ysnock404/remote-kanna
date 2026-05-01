@@ -5,6 +5,7 @@ import type { ChatAttachment } from "../shared/types"
 import type { ShareMode } from "../shared/share"
 import { LOCAL_MACHINE_ID, normalizeMachineId } from "../shared/project-location"
 import { createAuthManager } from "./auth"
+import { importStandaloneCodexSessions } from "./codex-session-import"
 import { EventStore } from "./event-store"
 import { AgentCoordinator } from "./agent"
 import { KannaAnalyticsReporter } from "./analytics"
@@ -113,20 +114,33 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
   await store.initialize()
   await diffStore.initialize()
   await store.migrateLegacyTranscripts(options.onMigrationProgress)
+  await importStandaloneCodexSessions(store).catch((error: unknown) => {
+    console.warn("[kanna] Codex session import failed:", error)
+  })
   let discoveredProjects: DiscoveredProject[] = []
   let remoteMachineConnectionSnapshots: RemoteMachineConnectionSnapshots = {}
+  let refreshDiscoveryPromise: Promise<DiscoveredProject[]> | null = null
   const appSettings = new AppSettingsManager(path.join(store.dataDir, "settings.json"))
   await appSettings.initialize()
 
   async function refreshDiscovery() {
-    const localProjects = discoverProjects()
-    const remoteDiscovery = await discoverRemoteProjectsWithStatus(appSettings.getSnapshot().remoteHosts ?? [])
-    remoteMachineConnectionSnapshots = remoteDiscovery.connectionSnapshots
-    discoveredProjects = [...localProjects, ...remoteDiscovery.projects]
-    return discoveredProjects
+    if (refreshDiscoveryPromise) return refreshDiscoveryPromise
+    refreshDiscoveryPromise = (async () => {
+      await importStandaloneCodexSessions(store).catch((error: unknown) => {
+        console.warn("[kanna] Codex session import failed:", error)
+      })
+      const localProjects = discoverProjects()
+      const remoteDiscovery = await discoverRemoteProjectsWithStatus(appSettings.getSnapshot().remoteHosts ?? [])
+      remoteMachineConnectionSnapshots = remoteDiscovery.connectionSnapshots
+      discoveredProjects = [...localProjects, ...remoteDiscovery.projects]
+      return discoveredProjects
+    })().finally(() => {
+      refreshDiscoveryPromise = null
+    })
+    return refreshDiscoveryPromise
   }
 
-  await refreshDiscovery()
+  discoveredProjects = discoverProjects()
 
   let server: ReturnType<typeof Bun.serve<ClientState>>
   let router: ReturnType<typeof createWsRouter>
@@ -151,6 +165,7 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
     store,
     analytics,
     resolveProjectRuntime: (project) => resolveProjectRuntime(normalizeMachineId(project.machineId), appSettings.getSnapshot().remoteHosts ?? []),
+    getDefaultProvider: () => appSettings.getSnapshot().defaultProvider,
     onStateChange: (chatId?: string, options?: { immediate?: boolean }) => {
       if (chatId) {
         if (options?.immediate) {
@@ -301,6 +316,12 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
       actualPort++
     }
   }
+
+  void refreshDiscovery()
+    .then(() => router.broadcastSnapshots())
+    .catch((error: unknown) => {
+      console.warn("[kanna] initial remote discovery failed:", error)
+    })
 
   analytics.trackLaunch({
     port: actualPort,

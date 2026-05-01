@@ -2,6 +2,7 @@ import { query, type CanUseTool, type PermissionResult, type Query, type SDKUser
 import type {
   AgentProvider,
   ChatAttachment,
+  DefaultProviderPreference,
   ContextWindowUsageSnapshot,
   ModelOptions,
   NormalizedToolCall,
@@ -106,6 +107,7 @@ interface AgentCoordinatorArgs {
   codexManager?: CodexAppServerManager
   generateTitle?: (messageContent: string, cwd: string) => Promise<GenerateChatTitleResult>
   resolveProjectRuntime?: (project: ProjectRecord) => ProjectRuntime
+  getDefaultProvider?: () => DefaultProviderPreference
   startClaudeSession?: (args: {
     localPath: string
     model: string
@@ -136,13 +138,6 @@ function logClaudeSteer(stage: string, details?: Record<string, unknown>) {
 
 const STEERED_MESSAGE_PREFIX = `<system-message>
 The user would like to inform you of something while you continue to work. Acknowledge receipt immediately with a text response, then continue with the task at hand, incorporating the user's feedback if needed.
-</system-message>`
-
-const GENERAL_CHAT_MESSAGE_PREFIX = `<system-message>
-This conversation is a general chat. No user project or repository is attached.
-The current working directory is an internal scratch directory used only because the agent runtime requires a cwd. It is not the user's project.
-Do not inspect or summarize the current directory to answer questions about "the project", repository state, files, git status, or app code. If the user asks about the current project while in this mode, say that no project is attached and ask them to open or select the project folder first.
-Do not mention the internal scratch directory unless the user explicitly asks about runtime internals.
 </system-message>`
 
 interface SendMessageOptions {
@@ -180,13 +175,7 @@ function buildSteeredMessageContent(content: string) {
 }
 
 function buildAgentMessageContent(content: string, project: ProjectRecord) {
-  if (!project.isGeneralChat) {
-    return content
-  }
-  const trimmed = content.trim()
-  return trimmed
-    ? `${GENERAL_CHAT_MESSAGE_PREFIX}\n\n${trimmed}`
-    : GENERAL_CHAT_MESSAGE_PREFIX
+  return content
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -696,6 +685,7 @@ export class AgentCoordinator {
   private readonly codexManager: CodexAppServerManager
   private readonly generateTitle: (messageContent: string, cwd: string) => Promise<GenerateChatTitleResult>
   private readonly resolveProjectRuntime: (project: ProjectRecord) => ProjectRuntime
+  private readonly getDefaultProvider: () => DefaultProviderPreference
   private readonly startClaudeSessionFn: NonNullable<AgentCoordinatorArgs["startClaudeSession"]>
   private reportBackgroundError: ((message: string) => void) | null = null
   readonly activeTurns = new Map<string, ActiveTurn>()
@@ -709,6 +699,7 @@ export class AgentCoordinator {
     this.codexManager = args.codexManager ?? new CodexAppServerManager()
     this.generateTitle = args.generateTitle ?? generateTitleForChatDetailed
     this.resolveProjectRuntime = args.resolveProjectRuntime ?? (() => ({ kind: "local" }))
+    this.getDefaultProvider = args.getDefaultProvider ?? (() => "claude")
     this.startClaudeSessionFn = args.startClaudeSession ?? startClaudeSession
   }
 
@@ -770,7 +761,10 @@ export class AgentCoordinator {
 
   private resolveProvider(options: SendMessageOptions, currentProvider: AgentProvider | null) {
     if (currentProvider) return currentProvider
-    return options.provider ?? "claude"
+    if (options.provider) return options.provider
+
+    const defaultProvider = this.getDefaultProvider()
+    return defaultProvider === "codex" ? "codex" : "claude"
   }
 
   private getProviderSettings(provider: AgentProvider, options: SendMessageOptions) {

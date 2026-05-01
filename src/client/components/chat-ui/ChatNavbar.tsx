@@ -1,5 +1,5 @@
 import { type MouseEvent as ReactMouseEvent } from "react"
-import { Check, Flower, FolderInput, GitBranch, Loader2, Menu, MoreHorizontal, PanelLeft, PanelRight, SquarePen, Terminal, UserRoundPlus } from "lucide-react"
+import { Check, Code, Flower, FolderInput, GitBranch, Loader2, Menu, MoreHorizontal, PanelLeft, PanelRight, SquarePen, Terminal, UserRoundPlus } from "lucide-react"
 import type { EditorOpenSettings, EditorPreset, OpenExternalAction } from "../../../shared/protocol"
 import { Button } from "../ui/button"
 import { CardHeader } from "../ui/card"
@@ -23,6 +23,7 @@ function openContextMenuFromButton(event: ReactMouseEvent<HTMLButtonElement>) {
 
 function NavbarOverflowMenu({
   showOnDesktop,
+  onOpenVscodeRemote,
   onToggleEmbeddedTerminal,
   onExportTranscript,
   canExportTranscript,
@@ -30,13 +31,14 @@ function NavbarOverflowMenu({
   exportTranscriptComplete,
 }: {
   showOnDesktop: boolean
+  onOpenVscodeRemote?: () => void
   onToggleEmbeddedTerminal?: () => void
   onExportTranscript?: () => void
   canExportTranscript: boolean
   isExportingTranscript: boolean
   exportTranscriptComplete: boolean
 }) {
-  if (!onToggleEmbeddedTerminal && !onExportTranscript) return null
+  if (!onOpenVscodeRemote && !onToggleEmbeddedTerminal && !onExportTranscript) return null
 
   return (
     <ContextMenu>
@@ -55,6 +57,17 @@ function NavbarOverflowMenu({
         </Button>
       </ContextMenuTrigger>
       <ContextMenuContent>
+        {onOpenVscodeRemote ? (
+          <ContextMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
+              onOpenVscodeRemote()
+            }}
+          >
+            <Code strokeWidth={2} className="h-3.5 w-3.5" />
+            <span className="text-xs font-medium">Open in VS Code SSH</span>
+          </ContextMenuItem>
+        ) : null}
         {onToggleEmbeddedTerminal ? (
           <ContextMenuItem
             onSelect={(event) => {
@@ -101,6 +114,7 @@ interface Props {
   rightSidebarVisible?: boolean
   onToggleRightSidebar?: () => void
   onLinkProject?: () => void
+  onOpenVscodeRemote?: () => void
   onOpenExternal?: (action: OpenExternalAction, editor?: EditorOpenSettings) => void
   onExportTranscript?: () => void
   canExportTranscript?: boolean
@@ -129,6 +143,7 @@ export function ChatNavbar({
   rightSidebarVisible = false,
   onToggleRightSidebar,
   onLinkProject,
+  onOpenVscodeRemote,
   onOpenExternal,
   onExportTranscript,
   canExportTranscript = false,
@@ -151,7 +166,7 @@ export function ChatNavbar({
       ? null
       : (branchName ?? "Detached HEAD")
   const isMac = platform === "darwin"
-  const hasProjectActions = Boolean(localPath && (onOpenExternal || onToggleEmbeddedTerminal || onToggleRightSidebar || onExportTranscript))
+  const hasProjectActions = Boolean(localPath && (onOpenExternal || onOpenVscodeRemote || onToggleEmbeddedTerminal || onToggleRightSidebar || onExportTranscript))
 
   return (
     <CardHeader
@@ -227,35 +242,51 @@ export function ChatNavbar({
                 />
               </div>
             ) : null}
-            {localPath && (onToggleEmbeddedTerminal || onToggleRightSidebar || onExportTranscript) ? (
+            {localPath && (onOpenVscodeRemote || onToggleEmbeddedTerminal || onToggleRightSidebar || onExportTranscript) ? (
               <div className="flex items-center border border-border rounded-2xl px-2 py-0.5 backdrop-blur-lg">
                 <NavbarOverflowMenu
                   showOnDesktop={rightSidebarVisible}
+                  onOpenVscodeRemote={onOpenVscodeRemote}
                   onToggleEmbeddedTerminal={onToggleEmbeddedTerminal}
                   onExportTranscript={onExportTranscript}
                   canExportTranscript={canExportTranscript}
                   isExportingTranscript={isExportingTranscript}
                   exportTranscriptComplete={exportTranscriptComplete}
                 />
+                {onOpenVscodeRemote ? (
+                  <Button
+                    variant="ghost"
+                    size="none"
+                    onClick={onOpenVscodeRemote}
+                    title="Open in VS Code SSH"
+                    aria-label="Open in VS Code SSH"
+                    className={cn(
+                      "hidden md:flex",
+                      "border border-border/0 hover:!border-border/0 px-1.5 h-9 hover:!bg-transparent"
+                    )}
+                  >
+                    <Code strokeWidth={2} className="h-4.5" />
+                  </Button>
+                ) : null}
                 {onToggleEmbeddedTerminal ? (
-                <HotkeyTooltip>
-                  <HotkeyTooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="none"
-                      onClick={onToggleEmbeddedTerminal}
-                      className={cn(
-                        rightSidebarVisible ? "hidden" : "hidden md:flex",
-                        "border border-border/0 hover:!border-border/0 px-1.5 h-9 hover:!bg-transparent",
-                        embeddedTerminalVisible && "text-foreground"
-                      )}
-                    >
-                      <Terminal strokeWidth={2} className="h-4.5" />
-                    </Button>
-                  </HotkeyTooltipTrigger>
-                  <HotkeyTooltipContent side="bottom" shortcut={terminalShortcut} />
-                </HotkeyTooltip>
-              ) : null}
+                  <HotkeyTooltip>
+                    <HotkeyTooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="none"
+                        onClick={onToggleEmbeddedTerminal}
+                        className={cn(
+                          rightSidebarVisible ? "hidden" : "hidden md:flex",
+                          "border border-border/0 hover:!border-border/0 px-1.5 h-9 hover:!bg-transparent",
+                          embeddedTerminalVisible && "text-foreground"
+                        )}
+                      >
+                        <Terminal strokeWidth={2} className="h-4.5" />
+                      </Button>
+                    </HotkeyTooltipTrigger>
+                    <HotkeyTooltipContent side="bottom" shortcut={terminalShortcut} />
+                  </HotkeyTooltip>
+                ) : null}
                 {onExportTranscript ? (
                   <Button
                     variant="ghost"

@@ -34,6 +34,18 @@ function toKebab(str: string): string {
     .replace(/^-|-$/g, "")
 }
 
+function getDirectoryBrowserErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  if (
+    message.includes("ENOENT")
+    || message.includes("no such file or directory")
+    || message.includes("Directory not found")
+  ) {
+    return "Folder not found. Press Open Project to create it."
+  }
+  return message
+}
+
 export function NewProjectModal({
   open,
   machineId,
@@ -86,7 +98,7 @@ export function NewProjectModal({
       setBrowserSnapshot(snapshot)
       setExistingPath(snapshot.path)
     } catch (error) {
-      setBrowserError(error instanceof Error ? error.message : String(error))
+      setBrowserError(getDirectoryBrowserErrorMessage(error))
     } finally {
       setBrowserLoading(false)
     }
@@ -157,10 +169,7 @@ export function NewProjectModal({
                 value={existingPath}
                 onChange={(e) => setExistingPath(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    if (onBrowseDirectories) void loadDirectories(existingPath)
-                    else handleSubmit()
-                  }
+                  if (e.key === "Enter") handleSubmit()
                   if (e.key === "Escape") onOpenChange(false)
                 }}
                 placeholder="~/Projects/my-app"

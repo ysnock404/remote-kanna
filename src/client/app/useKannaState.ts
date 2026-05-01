@@ -19,6 +19,7 @@ import { copyTextToClipboard } from "../lib/clipboard"
 import { processTranscriptMessages } from "../lib/parseTranscript"
 import { generateUUID } from "../lib/utils"
 import { canCancelStatus, getLatestToolIds, isProcessingStatus } from "./derived"
+import { getProjectRequestCommand, type ProjectRequest } from "./projectRequests"
 import { KannaSocket, type SocketStatus } from "./socket"
 import type { EditorOpenSettings, OpenExternalAction } from "../../shared/protocol"
 
@@ -306,6 +307,10 @@ function syncRuntimeStoresFromAppSettings(snapshot: AppSettingsSnapshot) {
     defaultProvider: snapshot.defaultProvider,
     providerDefaults: snapshot.providerDefaults,
   })
+
+  if (snapshot.defaultProvider === "claude" || snapshot.defaultProvider === "codex") {
+    useChatPreferencesStore.getState().resetChatComposerFromProvider(NEW_CHAT_COMPOSER_ID, snapshot.defaultProvider)
+  }
 }
 
 function serializeAttachmentSignature(attachment: ChatAttachment) {
@@ -599,13 +604,6 @@ async function isServerReady(fetchImpl: typeof fetch = fetch) {
   return response.ok
 }
 
-export interface ProjectRequest {
-  mode: "new" | "existing"
-  machineId?: MachineId
-  localPath: string
-  title: string
-}
-
 export type StartChatIntent =
   | { kind: "project_id"; projectId: string }
   | { kind: "local_path"; machineId?: MachineId; localPath: string }
@@ -694,7 +692,7 @@ export interface KannaState {
   handleListDirectories: (machineId: MachineId, path?: string) => Promise<DirectoryBrowserSnapshot>
   loadOlderHistory: () => Promise<void>
   handleCreateChat: (projectId: string) => Promise<void>
-  handleCreateGeneralChat: () => Promise<void>
+  handleCreateGeneralChat: (machineId?: MachineId) => Promise<void>
   handleForkChat: (chat: SidebarChatRow) => Promise<void>
   handleOpenLocalProject: (localPath: string, machineId?: MachineId) => Promise<void>
   handleCreateProject: (project: ProjectRequest) => Promise<void>
@@ -1441,11 +1439,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
       return { projectId: result.projectId, localPath: intent.localPath }
     }
 
-    const result = await socket.command<{ projectId: string }>(
-      intent.project.mode === "new"
-        ? { type: "project.create", localPath: intent.project.localPath, title: intent.project.title, machineId: intent.project.machineId }
-        : { type: "project.open", localPath: intent.project.localPath, machineId: intent.project.machineId }
-    )
+    const result = await socket.command<{ projectId: string }>(getProjectRequestCommand(intent.project))
     return { projectId: result.projectId, localPath: intent.project.localPath }
   }, [socket])
 
@@ -1478,14 +1472,18 @@ export function useKannaState(activeChatId: string | null): KannaState {
     await startChatFromIntent({ kind: "project_id", projectId })
   }, [startChatFromIntent])
 
-  const handleCreateGeneralChat = useCallback(async () => {
+  const handleCreateGeneralChat = useCallback(async (machineId: MachineId = selectedMachineId) => {
     try {
-      setStartingLocalPath("general-chat")
+      const normalizedMachineId = normalizeMachineId(machineId)
+      setStartingLocalPath(getProjectLocationKey(normalizedMachineId, "general-chat"))
       const chatPreferences = useChatPreferencesStore.getState()
       const sourceComposerState = activeChatId
         ? chatPreferences.getComposerState(activeChatId)
         : chatPreferences.getComposerState(NEW_CHAT_COMPOSER_ID)
-      const result = await socket.command<{ chatId: string; projectId: string }>({ type: "chat.createGeneral" })
+      const result = await socket.command<{ chatId: string; projectId: string }>({
+        type: "chat.createGeneral",
+        machineId: normalizedMachineId,
+      })
       chatPreferences.initializeComposerForChat(result.chatId, { sourceState: sourceComposerState })
       setSelectedProjectId(result.projectId)
       setPendingChatId(result.chatId)
@@ -1497,7 +1495,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     } finally {
       setStartingLocalPath(null)
     }
-  }, [activeChatId, navigate, socket])
+  }, [activeChatId, navigate, selectedMachineId, socket])
 
   const handleForkChat = useCallback(async (chat: SidebarChatRow) => {
     try {

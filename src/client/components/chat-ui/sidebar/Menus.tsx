@@ -14,6 +14,7 @@ export function ProjectSectionMenu({
   onShowArchived,
   onOpenInFinder,
   onOpenInEditor,
+  onOpenInVscodeRemote,
   onHide,
   children,
 }: {
@@ -23,6 +24,7 @@ export function ProjectSectionMenu({
   onShowArchived: () => void
   onOpenInFinder: () => void
   onOpenInEditor: () => void
+  onOpenInVscodeRemote?: () => void
   onHide: () => void
   children: ReactNode
 }) {
@@ -90,6 +92,17 @@ export function ProjectSectionMenu({
           <Code className="h-3.5 w-3.5" />
           <span className="text-xs font-medium">Open in {editorLabel}</span>
         </ContextMenuItem>
+        {onOpenInVscodeRemote ? (
+          <ContextMenuItem
+            onSelect={(event) => {
+              event.stopPropagation()
+              onOpenInVscodeRemote()
+            }}
+          >
+            <Code className="h-3.5 w-3.5" />
+            <span className="text-xs font-medium">Open in VS Code SSH</span>
+          </ContextMenuItem>
+        ) : null}
         <ContextMenuItem
           onSelect={(event) => {
             event.stopPropagation()

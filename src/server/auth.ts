@@ -1,6 +1,9 @@
-import { randomBytes, timingSafeEqual } from "node:crypto"
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
 
 const SESSION_COOKIE_NAME = "kanna_session"
+const SIGNED_SESSION_VERSION = "v2"
+const SESSION_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
+const SESSION_COOKIE_MAX_AGE_MS = SESSION_COOKIE_MAX_AGE_SECONDS * 1000
 
 export interface AuthStatusPayload {
   enabled: boolean
@@ -112,9 +115,43 @@ export interface AuthManagerOptions {
 }
 
 export function createAuthManager(password: string, options: AuthManagerOptions = {}): AuthManager {
-  const sessions = new Set<string>()
+  const legacySessions = new Set<string>()
+  const revokedSignedSessions = new Set<string>()
   const expectedPassword = Buffer.from(password)
   const trustProxy = options.trustProxy ?? false
+
+  function signSessionPayload(payload: string) {
+    return createHmac("sha256", expectedPassword).update(payload).digest("base64url")
+  }
+
+  function safeTimingEqualString(left: string, right: string) {
+    const leftBuffer = Buffer.from(left)
+    const rightBuffer = Buffer.from(right)
+    return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer)
+  }
+
+  function createSignedSessionToken() {
+    const issuedAt = Date.now()
+    const expiresAt = issuedAt + SESSION_COOKIE_MAX_AGE_MS
+    const payload = `${SIGNED_SESSION_VERSION}.${issuedAt}.${expiresAt}.${randomBytes(16).toString("base64url")}`
+    return `${payload}.${signSessionPayload(payload)}`
+  }
+
+  function isValidSignedSessionToken(sessionToken: string) {
+    const parts = sessionToken.split(".")
+    if (parts.length !== 5) return false
+
+    const [version, issuedAtText, expiresAtText, nonce, signature] = parts
+    if (version !== SIGNED_SESSION_VERSION || !issuedAtText || !expiresAtText || !nonce || !signature) return false
+
+    const issuedAt = Number(issuedAtText)
+    const expiresAt = Number(expiresAtText)
+    if (!Number.isSafeInteger(issuedAt) || !Number.isSafeInteger(expiresAt)) return false
+    if (issuedAt > expiresAt || Date.now() > expiresAt) return false
+
+    const payload = `${version}.${issuedAtText}.${expiresAtText}.${nonce}`
+    return safeTimingEqualString(signature, signSessionPayload(payload))
+  }
 
   function getSessionToken(req: Request) {
     return parseCookies(req.headers.get("cookie")).get(SESSION_COOKIE_NAME) ?? null
@@ -122,7 +159,9 @@ export function createAuthManager(password: string, options: AuthManagerOptions 
 
   function isAuthenticated(req: Request) {
     const sessionToken = getSessionToken(req)
-    return Boolean(sessionToken && sessions.has(sessionToken))
+    if (!sessionToken) return false
+    if (legacySessions.has(sessionToken)) return true
+    return !revokedSignedSessions.has(sessionToken) && isValidSignedSessionToken(sessionToken)
   }
 
   function validateOrigin(req: Request) {
@@ -134,25 +173,23 @@ export function createAuthManager(password: string, options: AuthManagerOptions 
   }
 
   function createSessionCookie(req: Request) {
-    const sessionToken = randomBytes(32).toString("base64url")
-    sessions.add(sessionToken)
-    return buildCookie(SESSION_COOKIE_NAME, sessionToken, req, trustProxy)
+    const sessionToken = createSignedSessionToken()
+    return buildCookie(SESSION_COOKIE_NAME, sessionToken, req, trustProxy, [`Max-Age=${SESSION_COOKIE_MAX_AGE_SECONDS}`])
   }
 
   function clearSessionCookie(req: Request) {
     const sessionToken = getSessionToken(req)
     if (sessionToken) {
-      sessions.delete(sessionToken)
+      legacySessions.delete(sessionToken)
+      if (isValidSignedSessionToken(sessionToken)) {
+        revokedSignedSessions.add(sessionToken)
+      }
     }
     return buildCookie(SESSION_COOKIE_NAME, "", req, trustProxy, ["Max-Age=0"])
   }
 
   function verifyPassword(candidate: string) {
-    const actual = Buffer.from(candidate)
-    if (actual.length !== expectedPassword.length) {
-      return false
-    }
-    return timingSafeEqual(actual, expectedPassword)
+    return safeTimingEqualString(candidate, password)
   }
 
   function handleStatus(req: Request) {

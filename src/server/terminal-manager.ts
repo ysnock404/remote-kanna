@@ -4,7 +4,8 @@ import defaultShell, { detectDefaultShell } from "default-shell"
 import { Terminal } from "@xterm/headless"
 import { SerializeAddon } from "@xterm/addon-serialize"
 import type { TerminalEvent, TerminalSnapshot } from "../shared/protocol"
-import { getRemoteShellCommand, type ProjectRuntime } from "./remote-hosts"
+import type { RemoteHostConfig } from "../shared/types"
+import { getRemoteCmdTerminalCommand, getRemoteShellCommand, type ProjectRuntime } from "./remote-hosts"
 
 const DEFAULT_COLS = 80
 const DEFAULT_ROWS = 24
@@ -29,6 +30,7 @@ interface TerminalSession {
   title: string
   cwd: string
   shell: string
+  runtimeKind: ProjectRuntime["kind"]
   cols: number
   rows: number
   scrollback: number
@@ -83,6 +85,32 @@ function createTerminalEnv() {
     TERM: "xterm-256color",
     COLORTERM: "truecolor",
   }
+}
+
+export function buildRemoteTerminalSshCommand(host: RemoteHostConfig, cwd: string) {
+  if (host.terminalShell === "cmd") {
+    return [
+      "ssh",
+      "-tt",
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ConnectTimeout=5",
+      host.sshTarget,
+      getRemoteCmdTerminalCommand(cwd),
+    ]
+  }
+
+  return [
+    "ssh",
+    "-tt",
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "ConnectTimeout=5",
+    host.sshTarget,
+    getRemoteShellCommand(cwd),
+  ]
 }
 
 function updateFocusReportingState(session: Pick<TerminalSession, "focusReportingEnabled" | "modeSequenceTail">, chunk: string) {
@@ -181,7 +209,9 @@ export class TerminalManager {
       return this.snapshotOf(existing)
     }
 
-    const shell = runtime.kind === "ssh" ? "ssh" : resolveShell()
+    const shell = runtime.kind === "ssh"
+      ? runtime.host.terminalShell === "cmd" ? "cmd.exe" : "ssh"
+      : resolveShell()
     const cols = normalizeTerminalDimension(args.cols, DEFAULT_COLS)
     const rows = normalizeTerminalDimension(args.rows, DEFAULT_ROWS)
     const scrollback = clampScrollback(args.scrollback)
@@ -195,6 +225,7 @@ export class TerminalManager {
       title,
       cwd: args.projectPath,
       shell,
+      runtimeKind: runtime.kind,
       cols,
       rows,
       scrollback,
@@ -224,16 +255,7 @@ export class TerminalManager {
 
     try {
       const command = runtime.kind === "ssh"
-        ? [
-            "ssh",
-            "-tt",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ConnectTimeout=5",
-            runtime.host.sshTarget,
-            getRemoteShellCommand(args.projectPath),
-          ]
+        ? buildRemoteTerminalSshCommand(runtime.host, args.projectPath)
         : [shell, ...resolveShellArgs(shell)]
       session.process = Bun.spawn(command, {
         cwd: runtime.kind === "local" ? args.projectPath : undefined,
@@ -303,7 +325,11 @@ export class TerminalManager {
         session.terminal.write(filteredData.slice(cursor, ctrlCIndex))
       }
 
-      signalTerminalProcessGroup(session.process, "SIGINT")
+      if (session.runtimeKind === "ssh") {
+        session.terminal.write("\x03")
+      } else {
+        signalTerminalProcessGroup(session.process, "SIGINT")
+      }
       cursor = ctrlCIndex + 1
     }
   }

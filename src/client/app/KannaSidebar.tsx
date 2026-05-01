@@ -13,6 +13,7 @@ import { ChatRow } from "../components/chat-ui/sidebar/ChatRow"
 import { LocalProjectsSection } from "../components/chat-ui/sidebar/LocalProjectsSection"
 import { MachineSelector } from "../components/MachineSelector"
 import { getResolvedKeybindings } from "../lib/keybindings"
+import { getVscodeRemoteSshUri } from "../lib/vscodeRemote"
 import type { CodexAssetsSnapshot, CodexPluginSummary, CodexSkillSummary, HiddenProjectSummary, KeybindingsSnapshot, LocalProjectsSnapshot, MachineId, MachineSummary, SidebarData, SidebarChatRow, SidebarProjectGroup, UpdateSnapshot } from "../../shared/types"
 import type { SocketStatus } from "./socket"
 import {
@@ -62,7 +63,7 @@ interface KannaSidebarProps {
   onSelectMachine: (machineId: MachineId) => void
   onRenameMachine: (machineId: MachineId, label: string) => Promise<void>
   onCreateChat: (projectId: string) => void
-  onCreateGeneralChat: () => void
+  onCreateGeneralChat: (machineId: MachineId) => void
   onForkChat: (chat: SidebarChatRow) => void
   currentProjectId: string | null
   keybindings: KeybindingsSnapshot | null
@@ -104,14 +105,6 @@ function getMachineProjectCounts(projectGroups: SidebarProjectGroup[]) {
     counts.set(machineId, (counts.get(machineId) ?? 0) + 1)
   }
   return counts
-}
-
-function SidebarPanelLabel({ children }: { children: ReactNode }) {
-  return (
-    <div className="px-2 pt-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-      {children}
-    </div>
-  )
 }
 
 function ProjectsPanelMenu({
@@ -316,12 +309,15 @@ function KannaSidebarImpl({
     [visibleChats]
   )
   const machines = useMemo(() => getSidebarMachines(localProjects), [localProjects])
+  const machinesById = useMemo(() => new Map(machines.map((machine) => [machine.id, machine])), [machines])
   const activeMachine = machines.find((machine) => machine.id === selectedMachineId) ?? machines[0] ?? null
   const activeMachineId = activeMachine?.id ?? selectedMachineId
   const machineProjectCounts = useMemo(() => getMachineProjectCounts(data.projectGroups), [data.projectGroups])
   const generalProjectGroups = useMemo(
-    () => data.projectGroups.filter((group) => group.isGeneralChat),
-    [data.projectGroups]
+    () => data.projectGroups.filter((group) => (
+      group.isGeneralChat && (group.machineId ?? LOCAL_MACHINE_ID) === activeMachineId
+    )),
+    [activeMachineId, data.projectGroups]
   )
   const activeMachineProjectGroups = useMemo(
     () => data.projectGroups.filter((group) => (
@@ -515,6 +511,14 @@ function KannaSidebarImpl({
     onCreateChat(currentProjectId)
     onClose()
   }, [canCreateChatInCurrentProject, currentProjectId, onClose, onCreateChat])
+
+  const handleOpenVscodeRemote = useCallback((localPath: string, machineId?: MachineId) => {
+    if (!machineId) return
+    const machine = machinesById.get(machineId) ?? { id: machineId }
+    const uri = getVscodeRemoteSshUri(machine, localPath)
+    if (!uri) return
+    window.location.assign(uri)
+  }, [machinesById])
 
   const renderChatRow = useCallback((chat: SidebarChatRow) => {
     const visibleIndex = visibleIndexByChatId.get(chat.chatId)
@@ -873,8 +877,22 @@ function KannaSidebarImpl({
                 setHiddenProjectsDialogOpen(true)
               }}
             >
-              <div>
-                <SidebarPanelLabel>Projects</SidebarPanelLabel>
+              <div className="group/projects-panel flex items-center justify-between gap-2 rounded-md px-2 pt-3 pb-1 transition-colors hover:bg-muted/40">
+                <div className="min-w-0 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                  Projects
+                </div>
+                <button
+                  type="button"
+                  title="Add project"
+                  aria-label="Add project"
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/projects-panel:opacity-100"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    openAddProject()
+                  }}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
               </div>
             </ProjectsPanelMenu>
             <LocalProjectsSection
@@ -891,6 +909,7 @@ function KannaSidebarImpl({
               onRenameProject={onRenameProject}
               onCopyPath={onCopyPath}
               onOpenExternalPath={onOpenExternalPath}
+              onOpenVscodeRemote={handleOpenVscodeRemote}
               onHideProject={onHideProject}
               isConnected={connectionStatus === "connected"}
             />
@@ -909,13 +928,18 @@ function KannaSidebarImpl({
                     className="min-w-0 flex-1 text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70 transition-colors hover:text-muted-foreground"
                   >
                     General chats
+                    {activeMachine ? (
+                      <span className="normal-case tracking-normal text-muted-foreground/50">
+                        {" "}· {activeMachine.displayName}
+                      </span>
+                    ) : null}
                   </button>
                   <button
                     type="button"
                     title="New general chat"
                     className="flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/general-chats:opacity-100"
                     onClick={() => {
-                      onCreateGeneralChat()
+                      onCreateGeneralChat(activeMachineId)
                       onClose()
                     }}
                   >

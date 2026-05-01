@@ -100,7 +100,7 @@ export type ClientCommand =
       editor?: EditorOpenSettings
     }
   | { type: "chat.create"; projectId: string }
-  | { type: "chat.createGeneral" }
+  | { type: "chat.createGeneral"; machineId?: MachineId }
   | { type: "chat.fork"; chatId: string }
   | { type: "chat.linkProject"; chatId: string; projectId: string }
   | { type: "chat.rename"; chatId: string; title: string }

@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { persistProjectUpload } from "./uploads"
+import { createAuthManager } from "./auth"
 import { startKannaServer } from "./server"
 
 const tempDirs: string[] = []
@@ -180,6 +181,44 @@ describe("password auth", () => {
     } finally {
       await server.stop()
     }
+  })
+
+  test("keeps signed session cookies valid across auth manager instances", async () => {
+    const firstAuth = createAuthManager("secret")
+    const loginResponse = await firstAuth.handleLogin(new Request("http://localhost/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ password: "secret", next: "/" }),
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "http://localhost",
+      },
+    }), "/")
+    const cookie = extractCookie(loginResponse)
+
+    const restartedAuth = createAuthManager("secret")
+    const statusResponse = restartedAuth.handleStatus(new Request("http://localhost/auth/status", {
+      headers: { Cookie: cookie },
+    }))
+
+    expect(await statusResponse.json()).toEqual({ enabled: true, authenticated: true })
+  })
+
+  test("revokes signed session cookies on logout for the active process", async () => {
+    const auth = createAuthManager("secret")
+    const loginResponse = await auth.handleLogin(new Request("http://localhost/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ password: "secret", next: "/" }),
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "http://localhost",
+      },
+    }), "/")
+    const cookie = extractCookie(loginResponse)
+
+    auth.handleLogout(new Request("http://localhost/auth/logout", { method: "POST", headers: { Cookie: cookie } }))
+
+    const statusResponse = auth.handleStatus(new Request("http://localhost/auth/status", { headers: { Cookie: cookie } }))
+    expect(await statusResponse.json()).toEqual({ enabled: true, authenticated: false })
   })
 
   test("ignores forwarded proto when trustProxy is off", async () => {

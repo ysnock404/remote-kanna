@@ -86,6 +86,7 @@ describe("readAppSettingsSnapshot", () => {
           label: "Lab Box",
           sshTarget: "dev@100.64.0.10",
           projectRoots: ["~/Projects", "", 3],
+          terminalShell: "cmd",
         },
       ],
     }), "utf8")
@@ -101,6 +102,7 @@ describe("readAppSettingsSnapshot", () => {
         projectRoots: ["~/Projects"],
         codexEnabled: true,
         claudeEnabled: false,
+        terminalShell: "cmd",
       },
     ])
   })

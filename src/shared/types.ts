@@ -407,6 +407,8 @@ export interface SidebarData {
   projectGroups: SidebarProjectGroup[]
 }
 
+export type RemoteHostTerminalShell = "auto" | "posix" | "cmd"
+
 export interface RemoteHostConfig {
   id: string
   label: string
@@ -415,6 +417,7 @@ export interface RemoteHostConfig {
   projectRoots: string[]
   codexEnabled: boolean
   claudeEnabled: boolean
+  terminalShell?: RemoteHostTerminalShell
 }
 
 export interface MachineSummary {

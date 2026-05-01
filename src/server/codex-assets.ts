@@ -1,5 +1,5 @@
 import type { CodexAssetsSnapshot, MachineId, RemoteHostConfig } from "../shared/types"
-import { runSshWithInput } from "./remote-hosts"
+import { getRemoteNodeCommand, runSshWithInput } from "./remote-hosts"
 
 const CODEX_ASSET_SCAN_TIMEOUT_MS = 15_000
 
@@ -292,7 +292,7 @@ export async function scanLocalCodexAssets(machineId: MachineId): Promise<CodexA
 }
 
 export async function scanRemoteCodexAssets(machineId: MachineId, host: RemoteHostConfig): Promise<CodexAssetsSnapshot> {
-  const result = await runSshWithInput(host, "node", getCodexAssetsScanScript(), CODEX_ASSET_SCAN_TIMEOUT_MS)
+  const result = await runSshWithInput(host, getRemoteNodeCommand("node"), getCodexAssetsScanScript(), CODEX_ASSET_SCAN_TIMEOUT_MS)
   if (result.exitCode !== 0) {
     throw new Error(result.stderr.trim() || `Failed to scan Codex assets on ${host.label}`)
   }

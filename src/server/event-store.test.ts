@@ -110,6 +110,34 @@ describe("EventStore", () => {
     expect(await readFile(join(dataDir, "transcripts", `${chatId}.jsonl`), "utf8")).toContain('"kind":"assistant_text"')
   })
 
+  test("replays event logs instead of clearing storage when snapshot is corrupt", async () => {
+    const dataDir = await createTempDataDir()
+    await writeFile(join(dataDir, "snapshot.json"), "{", "utf8")
+    await writeFile(join(dataDir, "projects.jsonl"), `${JSON.stringify({
+      v: 2,
+      type: "project_opened",
+      timestamp: 100,
+      projectId: "project-1",
+      machineId: "local",
+      localPath: "/tmp/project",
+      title: "Project",
+    })}\n`, "utf8")
+    await writeFile(join(dataDir, "chats.jsonl"), `${JSON.stringify({
+      v: 2,
+      type: "chat_created",
+      timestamp: 101,
+      chatId: "chat-1",
+      projectId: "project-1",
+      title: "Chat",
+    })}\n`, "utf8")
+
+    const store = new EventStore(dataDir)
+    await store.initialize()
+
+    expect(store.getProject("project-1")?.title).toBe("Project")
+    expect(store.getChat("chat-1")?.title).toBe("Chat")
+  })
+
   test("appends new transcript entries only to the per-chat transcript file", async () => {
     const dataDir = await createTempDataDir()
     const store = new EventStore(dataDir)
@@ -604,6 +632,29 @@ describe("EventStore", () => {
 
     expect(reloaded.requireChat(chat.id).projectId).toBe(targetProject.id)
     expect(reloaded.requireChat(chat.id).sessionToken).toBeNull()
+  })
+
+  test("keeps one General Chat project per machine", async () => {
+    const dataDir = await createTempDataDir()
+    const store = new EventStore(dataDir)
+    await store.initialize()
+
+    const localGeneral = await store.ensureGeneralChatProject("local", "/tmp/local-home")
+    const remoteGeneral = await store.ensureGeneralChatProject("remote:macbook", "~")
+    const localAgain = await store.ensureGeneralChatProject("local", "/tmp/local-home")
+
+    expect(localAgain.id).toBe(localGeneral.id)
+    expect(remoteGeneral.id).not.toBe(localGeneral.id)
+    expect(localGeneral).toMatchObject({
+      machineId: "local",
+      localPath: "/tmp/local-home",
+      isGeneralChat: true,
+    })
+    expect(remoteGeneral).toMatchObject({
+      machineId: "remote:macbook",
+      localPath: "~",
+      isGeneralChat: true,
+    })
   })
 
   test("does not link regular project chats to another project", async () => {
