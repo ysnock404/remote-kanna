@@ -1,50 +1,53 @@
-# Remote Kanna
+<p align="center">
+  <img src="assets/kanna-remote-mark.png" alt="Remote Kanna" width="860" />
+</p>
 
-Remote Kanna is a local-first remote coding UI focused on a central setup for multiple machines.
+<h1 align="center">Remote Kanna</h1>
 
-The target workflow is:
+<p align="center">
+  <strong>A remote-first fork of Kanna for running Codex and terminals across SSH/Tailscale machines.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/jakemor/kanna"><img src="https://img.shields.io/badge/upstream-Kanna-f472b6?style=flat&labelColor=18181b" alt="Upstream Kanna" /></a>
+  <img src="https://img.shields.io/badge/remote-SSH%20%2B%20Tailscale-38bdf8?style=flat&labelColor=18181b" alt="SSH and Tailscale remote support" />
+  <img src="https://img.shields.io/badge/runtime-Bun-ffffff?style=flat&labelColor=18181b" alt="Bun runtime" />
+</p>
+
+<br />
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/screenshot.png" />
+    <source media="(prefers-color-scheme: light)" srcset="assets/screenshot-light.png" />
+    <img src="assets/screenshot.png" alt="Remote Kanna screenshot" width="800" />
+  </picture>
+</p>
+
+<br />
+
+## Why This Fork Exists
+
+Remote Kanna keeps Kanna's clean chat UI, project sidebar, transcript rendering, and Codex support, then adds a central-machine workflow:
 
 ```text
-browser -> Remote Kanna server -> SSH/Tailscale IP -> remote machine -> Codex / terminal
+browser -> Remote Kanna server -> SSH/Tailscale -> remote machine -> Codex / terminal
 ```
 
-## Upstream Base
+Use it when one always-on server should control coding sessions on several machines, while each machine keeps its own projects, terminals, and general chats.
 
-- Upstream Kanna links, hosted share, analytics, and self-update checks are intentionally disabled in this fork.
-- Upstream base commit: `17ccafca8af2436067b08630bacfcf915ec83a8b`
+## Features
 
-Keep this commit around when rebasing or pulling newer Kanna changes into this fork.
+- **Remote project indexing** — discover projects from configured SSH machines.
+- **Per-machine General Chat** — each configured host gets its own General Chat space.
+- **Remote Codex sessions** — launch `codex app-server` on the selected machine and resume older Codex sessions where available.
+- **Embedded remote terminals** — open terminals through SSH, including Windows `cmd.exe` terminals with real TTY behavior.
+- **Tailscale-friendly targets** — use direct SSH targets such as `dev@100.64.0.10`.
+- **Project-first sidebar** — chats are grouped by project and by machine.
+- **Local-first storage** — event logs and snapshots stay on the Kanna server.
+- **Upstream Kanna UI base** — this fork is based on [jakemor/kanna](https://github.com/jakemor/kanna).
 
-## Current Focus
-
-- Index projects from configured SSH machines
-- Support direct Tailscale IP targets such as `dev@100.64.0.10`
-- Open remote terminal sessions from the central Kanna UI
-- Run remote Codex through `codex app-server` on the selected machine
-- Preserve normal local Kanna behavior as the default path
-
-## Current Limits
-
-- Remote Claude is not wired yet. The current Claude SDK runtime runs local to the Kanna server process.
-- Remote uploads, file previews, and git diff actions are still local-only.
-- SSH auth must be non-interactive. Use SSH keys or Tailscale SSH; password prompts are blocked.
-
-## Requirements
-
-Central machine:
-
-- Bun `1.3.5+`
-- SSH access to remote machines
-
-Each remote machine:
-
-- SSH reachable from the central machine
-- `codex` installed and authenticated
-- `git`
-- project directories present on disk
-- `codex app-server` working from a project directory
-
-## Install From Source
+## Quickstart
 
 ```bash
 git clone https://github.com/ysnock404/remote-kanna.git
@@ -54,10 +57,10 @@ bun run build
 bun install -g .
 ```
 
-Run:
+Run on the central machine:
 
 ```bash
-kanna --no-open
+kanna --remote --no-open
 ```
 
 Default URL:
@@ -87,12 +90,67 @@ Example:
       "projectRoots": ["~/Projects", "~/work"],
       "codexEnabled": true,
       "claudeEnabled": false
+    },
+    {
+      "id": "desktop-pc",
+      "label": "Windows Host",
+      "sshTarget": "dev@100.64.0.20",
+      "enabled": true,
+      "projectRoots": ["/c/Users/dev/Projects"],
+      "codexEnabled": true,
+      "claudeEnabled": false,
+      "terminalShell": "cmd"
     }
   ]
 }
 ```
 
+Use `terminalShell: "cmd"` for Windows OpenSSH hosts that should open embedded terminals in `cmd.exe`.
+
 More detail: [docs/remote-hosts.md](docs/remote-hosts.md)
+
+## Requirements
+
+Central machine:
+
+- Bun `1.3.5+`
+- SSH access to each remote machine
+- The Remote Kanna server process running in build or dev mode
+
+Each remote machine:
+
+- SSH reachable from the central machine
+- `codex` installed and authenticated for Codex sessions
+- `node` available for discovery helpers
+- `git`
+- Project directories present on disk
+
+SSH auth must be non-interactive. Use SSH keys or Tailscale SSH; password prompts are blocked by `BatchMode=yes`.
+
+## Architecture
+
+```text
+Browser (React)
+    <-> WebSocket
+Remote Kanna Server (Bun)
+    -> EventStore / ReadModels / WSRouter
+    -> local Codex app-server, local terminal, local files
+    -> SSH remote host
+         -> remote Codex app-server
+         -> remote terminal
+         -> remote project discovery
+```
+
+State is stored locally at `~/.kanna/data/` using append-only JSONL logs plus compacted snapshots.
+
+## Upstream Base
+
+This fork tracks the public Kanna project and keeps its original icon and core presentation style.
+
+- Upstream: [jakemor/kanna](https://github.com/jakemor/kanna)
+- Upstream base commit: `17ccafca8af2436067b08630bacfcf915ec83a8b`
+
+Keep this commit around when rebasing or pulling newer Kanna changes into this fork.
 
 ## Development
 
@@ -104,10 +162,15 @@ bun run dev
 Useful checks:
 
 ```bash
-bun run tsc --noEmit
+bun run check
 bun test
-bun run build
 ```
+
+## Current Limits
+
+- Remote Claude is not wired yet. The current Claude SDK runtime runs local to the Kanna server process.
+- SSH hosts need non-interactive auth.
+- Some desktop/open-file integrations may still depend on the host platform.
 
 ## Public Repo Safety
 

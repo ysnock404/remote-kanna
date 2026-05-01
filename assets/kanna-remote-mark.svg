@@ -1,0 +1,64 @@
+<svg width="1120" height="360" viewBox="0 0 1120 360" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Kanna remote connection mark</title>
+  <desc id="desc">The Kanna icon with a minimal remote connection motif.</desc>
+  <defs>
+    <radialGradient id="bgPink" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(434 178) rotate(25) scale(360 220)">
+      <stop stop-color="#fb7185" stop-opacity="0.22"/>
+      <stop offset="0.56" stop-color="#f472b6" stop-opacity="0.09"/>
+      <stop offset="1" stop-color="#f472b6" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="bgBlue" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(748 181) rotate(153) scale(340 215)">
+      <stop stop-color="#38bdf8" stop-opacity="0.18"/>
+      <stop offset="0.62" stop-color="#38bdf8" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#38bdf8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="stroke" x1="332" y1="180" x2="788" y2="180" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fb7185"/>
+      <stop offset="0.52" stop-color="#f472b6"/>
+      <stop offset="1" stop-color="#38bdf8"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="24" stdDeviation="28" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="16" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0.96 0 1 0 0 0.45 0 0 1 0 0.70 0 0 0 0.55 0"/>
+      <feBlend in2="SourceGraphic" mode="screen"/>
+    </filter>
+  </defs>
+
+  <rect width="1120" height="360" rx="38" fill="#111113"/>
+  <rect width="1120" height="360" rx="38" fill="url(#bgPink)"/>
+  <rect width="1120" height="360" rx="38" fill="url(#bgBlue)"/>
+
+  <g opacity="0.38">
+    <path d="M296 180C378 117 473 89 560 89C647 89 742 117 824 180" stroke="white" stroke-opacity="0.12" stroke-width="2"/>
+    <path d="M296 180C378 243 473 271 560 271C647 271 742 243 824 180" stroke="white" stroke-opacity="0.12" stroke-width="2"/>
+    <path d="M356 180H764" stroke="white" stroke-opacity="0.08" stroke-width="2"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="456" y="76" width="208" height="208" rx="52" fill="#09090b" fill-opacity="0.78" stroke="white" stroke-opacity="0.10"/>
+    <circle cx="560" cy="180" r="75" fill="#fb7185" opacity="0.14" filter="url(#glow)"/>
+    <image href="data:image/png;base64,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" x="512" y="132" width="96" height="96"/>
+  </g>
+
+  <g filter="url(#glow)">
+    <path d="M336 180C386 132 454 104 524 94" stroke="url(#stroke)" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 14"/>
+    <path d="M584 94C664 105 740 136 784 180" stroke="url(#stroke)" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 14"/>
+    <path d="M336 180C386 228 454 256 524 266" stroke="url(#stroke)" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 14"/>
+    <path d="M584 266C664 255 740 224 784 180" stroke="url(#stroke)" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 14"/>
+
+    <circle cx="320" cy="180" r="13" fill="#111113" stroke="#fb7185" stroke-width="4"/>
+    <circle cx="800" cy="180" r="13" fill="#111113" stroke="#38bdf8" stroke-width="4"/>
+    <circle cx="560" cy="82" r="11" fill="#111113" stroke="#f472b6" stroke-width="4"/>
+    <circle cx="560" cy="278" r="11" fill="#111113" stroke="#a78bfa" stroke-width="4"/>
+  </g>
+
+  <g opacity="0.9">
+    <path d="M292 180H244" stroke="#fb7185" stroke-width="4" stroke-linecap="round"/>
+    <path d="M828 180H876" stroke="#38bdf8" stroke-width="4" stroke-linecap="round"/>
+    <path d="M560 54V34" stroke="#f472b6" stroke-width="4" stroke-linecap="round"/>
+    <path d="M560 306V326" stroke="#a78bfa" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>
